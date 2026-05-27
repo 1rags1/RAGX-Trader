@@ -1,0 +1,149 @@
+/*
+  RAGX-Trader access gate — matches terminal dark theme tokens from style.css
+*/
+
+:root {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --border: #30363d;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --accent: #58a6ff;
+  --down: #f85149;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+.gate-body {
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  background:
+    radial-gradient(circle at 20% 15%, rgba(88, 166, 255, 0.1), transparent 42%),
+    radial-gradient(circle at 80% 0%, rgba(88, 166, 255, 0.06), transparent 48%),
+    var(--bg);
+  color: var(--text);
+  line-height: 1.45;
+}
+
+.gate-shell {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+.gate-card {
+  width: 100%;
+  max-width: 400px;
+  background: linear-gradient(180deg, rgba(22, 27, 34, 0.98), rgba(18, 22, 28, 0.98));
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1.75rem 1.6rem 1.5rem;
+  box-shadow:
+    0 24px 48px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.gate-eyebrow {
+  margin: 0 0 0.35rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.gate-title {
+  margin: 0 0 0.45rem;
+  font-size: 1.45rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.gate-lead {
+  margin: 0 0 1.25rem;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.gate-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.gate-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.gate-input {
+  width: 100%;
+  font: inherit;
+  font-size: 1rem;
+  letter-spacing: 0.12em;
+  color: var(--text);
+  background: rgba(13, 17, 23, 0.85);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.72rem 0.85rem;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.gate-input:focus {
+  border-color: rgba(88, 166, 255, 0.75);
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.18);
+}
+
+.gate-error {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--down);
+}
+
+.gate-error[hidden] {
+  display: none;
+}
+
+.gate-submit {
+  margin-top: 0.35rem;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text);
+  background: linear-gradient(180deg, rgba(88, 166, 255, 0.28), rgba(88, 166, 255, 0.14));
+  border: 1px solid rgba(88, 166, 255, 0.55);
+  border-radius: 8px;
+  padding: 0.7rem 1rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, opacity 0.15s ease;
+}
+
+.gate-submit:hover:not(:disabled) {
+  border-color: rgba(88, 166, 255, 0.85);
+  background: linear-gradient(180deg, rgba(88, 166, 255, 0.36), rgba(88, 166, 255, 0.18));
+}
+
+.gate-submit:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.gate-footnote {
+  margin: 1.1rem 0 0;
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-align: center;
+}

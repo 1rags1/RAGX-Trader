@@ -50,6 +50,36 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
+.app-tabs-spacer {
+  flex: 1;
+  min-width: 0.5rem;
+}
+
+.gate-logout-btn {
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid rgba(48, 54, 61, 0.95);
+  border-radius: 8px;
+  padding: 0.32rem 0.72rem;
+  cursor: pointer;
+  transition: color 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+}
+
+.gate-logout-btn:hover {
+  color: var(--text);
+  border-color: rgba(248, 81, 73, 0.55);
+  background: rgba(248, 81, 73, 0.08);
+}
+
+.gate-logout-btn:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .app-tab {
   font: inherit;
   font-size: 0.72rem;

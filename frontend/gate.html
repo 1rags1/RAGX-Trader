@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Access · RAGX Trader</title>
+    <link rel="stylesheet" href="/css/gate.css" />
+  </head>
+  <body class="gate-body">
+    <main class="gate-shell" aria-labelledby="gate-title">
+      <div class="gate-card">
+        <p class="gate-eyebrow">RAGX Trader</p>
+        <h1 id="gate-title" class="gate-title">Enter access code</h1>
+        <p class="gate-lead">
+          This dashboard is private. Enter the code you received to continue.
+        </p>
+
+        <form id="gateForm" class="gate-form" novalidate>
+          <label class="gate-label" for="gateCode">Access code</label>
+          <input
+            id="gateCode"
+            name="code"
+            type="password"
+            class="gate-input"
+            autocomplete="one-time-code"
+            autocapitalize="characters"
+            spellcheck="false"
+            required
+            autofocus
+          />
+          <p id="gateError" class="gate-error" role="alert" hidden></p>
+          <button type="submit" class="gate-submit" id="gateSubmit">Continue</button>
+        </form>
+
+        <p class="gate-footnote">
+          Research and education only. Not financial advice.
+        </p>
+      </div>
+    </main>
+    <script src="/js/gate.js" defer></script>
+  </body>
+</html>

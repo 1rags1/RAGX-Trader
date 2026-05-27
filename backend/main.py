@@ -63,6 +63,7 @@ from backend.timeframes import (
     is_allowed_interval,
     to_chart_bars,
 )
+from backend.access_gate import configure_access_gate, is_authenticated_websocket
 from backend.websocket_broadcaster import WebSocketBroadcaster
 
 logging.basicConfig(level=logging.INFO)
@@ -511,6 +512,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="RAGX-Trader", lifespan=lifespan)
+configure_access_gate(app)
 
 
 async def snapshot_buffer_chart_bars(app: FastAPI, limit: int) -> list[dict]:
@@ -1285,6 +1287,9 @@ async def chart_websocket(websocket: WebSocket):
     Client may send JSON: { "type": "set_timeframe", "interval": "5m" } (same as POST /api/timeframe).
     Plain "ping" is ignored for keepalive.
     """
+    if not is_authenticated_websocket(websocket):
+        await websocket.close(code=4401, reason="Unauthorized")
+        return
     broadcaster: WebSocketBroadcaster = app.state.broadcaster
     await broadcaster.register(websocket)
     try:
