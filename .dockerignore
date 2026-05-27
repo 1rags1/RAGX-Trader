@@ -1,0 +1,40 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Local secrets and env files
+.env
+.env.*
+!.env.example
+
+# Runtime data (created inside the container; do not bake local DB into image)
+data/*.sqlite
+data/*.jsonl
+data/signals.csv
+
+# IDE and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Docs / dev-only (not needed to run the app)
+*.md
+!README.md

@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RAGX-Trader</title>
+    <link rel="stylesheet" href="/css/style.css" />
+    <script
+      src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"
+      defer
+    ></script>
+    <script src="/js/chart.js" defer></script>
+    <script src="/js/chart_overlays.js" defer></script>
+    <script src="/js/signal_markers_layer.js" defer></script>
+    <script src="/js/chart_updater.js" defer></script>
+    <script src="/js/timeframe_manager.js" defer></script>
+    <script src="/js/ws_chart_handler.js" defer></script>
+    <script src="/js/live_price_panel.js" defer></script>
+    <script src="/js/market_config.js" defer></script>
+    <script src="/js/market_diagnostics.js" defer></script>
+    <script src="/js/indicators_panel.js" defer></script>
+    <script src="/js/signal_strength.js" defer></script>
+    <script src="/js/strategy_panel.js" defer></script>
+    <script src="/js/recent_signal_history.js" defer></script>
+    <script src="/js/paper_trading.js" defer></script>
+    <script src="/js/backtest_panel.js" defer></script>
+    <script src="/js/panel_layout_resizer.js" defer></script>
+    <script src="/js/signal_alerts.js" defer></script>
+    <script src="/js/chat_panel.js" defer></script>
+    <script src="/js/tabs.js" defer></script>
+    <script src="/js/investor_dashboard.js" defer></script>
+    <script src="/js/app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-tabs" role="tablist" aria-label="Dashboard mode">
+      <button
+        type="button"
+        class="app-tab app-tab--active"
+        id="tab-trader"
+        data-tab-target="trader"
+        role="tab"
+        aria-selected="true"
+        aria-controls="view-trader"
+      >
+        Trader
+      </button>
+      <button
+        type="button"
+        class="app-tab"
+        id="tab-investor"
+        data-tab-target="investor"
+        role="tab"
+        aria-selected="false"
+        aria-controls="view-investor"
+        tabindex="-1"
+      >
+        Investor
+      </button>
+    </div>
+
+    <div id="view-trader" class="app-view app-view--trader" role="tabpanel" aria-labelledby="tab-trader">
+      <header class="header">
+        <div class="header-top">
+          <div class="header-brand">
+            <h1>RAGX-Trader</h1>
+            <p id="header-market-badge" class="header-market-badge" aria-label="Active market">
+              Binance Spot (Global) • BTCUSDT
+            </p>
+            <p class="subtitle" id="subtitle-feed">Loading market…</p>
+          </div>
+          <div class="live-price-card" aria-live="polite">
+            <div class="live-price-market" id="live-price-market">Market: —</div>
+            <div class="live-price-row">
+              <span id="live-price-value" class="live-price-value">—</span>
+              <span class="live-price-unit">USDT</span>
+            </div>
+            <div id="live-price-change" class="live-price-change" data-dir="flat">—</div>
+            <p id="live-price-mode" class="live-price-mode">Active candle close</p>
+            <div id="live-price-updated" class="live-price-updated">Last update: —</div>
+          </div>
+        </div>
+      </header>
+
+      <section class="status-bar" aria-label="Connection status">
+        <div class="status-item">
+          <span class="status-dot" id="dot-backend" data-state="off"></span>
+          <span>Backend</span>
+          <span class="status-label" id="label-backend">…</span>
+        </div>
+        <div class="status-item">
+          <span class="status-dot" id="dot-binance" data-state="unknown"></span>
+          <span>Feed</span>
+          <span class="status-label" id="label-binance">…</span>
+        </div>
+        <div
+          class="status-item status-item--market"
+          title="Same symbol and venue as chart, engine, signals, and paper sim"
+        >
+          <span class="status-label muted">Data</span>
+          <span class="status-label" id="status-market-source">—</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label muted">Updated</span>
+          <span class="status-label" id="label-last-update">—</span>
+        </div>
+        <div class="status-bar-trailing">
+          <details id="market-diagnostics" class="market-diagnostics">
+            <summary
+              class="market-diagnostics-summary"
+              title="Internal debugging only — verify feed, endpoints, and price alignment"
+            >
+              Market debug
+            </summary>
+            <div
+              id="market-diagnostics-body"
+              class="market-diagnostics-body"
+              aria-label="Market diagnostics"
+            ></div>
+          </details>
+          <label class="paper-toggle-label sound-toggle-label" title="Play a short sound when a new BUY, SELL, or EXIT signal is logged (not on every price update)">
+            <input type="checkbox" id="signal-sound-toggle" />
+            <span>Sound alerts</span>
+          </label>
+          <button
+            type="button"
+            class="layout-reset-btn"
+            id="layout-reset-btn"
+            title="Restore default panel sizes (same as double-clicking a resize handle)"
+          >
+            Reset layout
+          </button>
+          <div class="status-item status-item--paper">
+            <label class="paper-toggle-label">
+              <input type="checkbox" id="paper-trade-toggle" />
+              <span>Paper trading</span>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <main class="main main--resizable">
+        <div class="dashboard-terminal" aria-label="Main workspace">
+        <!-- LEFT: system / context -->
+        <aside class="sidebar sidebar--left" aria-label="Market context and indicators">
+          <header class="sidebar-header sidebar-header--compact">
+            <h2 class="sidebar-title">Context</h2>
+            <p class="sidebar-tagline">Trend, indicators, rules — same data the engine uses.</p>
+          </header>
+
+          <details class="panel-details sidebar-section market-summary-section" open>
+            <summary>Market at a glance</summary>
+            <div class="panel-body">
+              <p class="sidebar-lead muted market-summary-lead">
+                Plain-language read from the same indicators and rules — not a price prediction.
+              </p>
+              <p
+                id="market-summary-headline"
+                class="market-summary-headline"
+                aria-live="polite"
+              >
+                —
+              </p>
+              <ul
+                id="market-summary-list"
+                class="market-summary-list"
+                aria-label="Market summary points"
+              ></ul>
+            </div>
+          </details>
+
+          <details class="panel-details sidebar-section" open>
+            <summary>Trend</summary>
+            <div class="panel-body">
+            <p class="sidebar-lead">
+              The blue line on the chart is a <strong>20-period average of the close</strong> (EMA). It
+              filters noise so you can see whether price is generally above or below that average.
+            </p>
+            <p id="ind-trend-summary" class="ind-plain-summary ind-plain-summary--emphasis">—</p>
+            <details class="nested-details nested-details--tight">
+              <summary>EMA vs close (numbers)</summary>
+              <dl class="debug-grid">
+                <dt>Last close</dt>
+                <dd id="ind-trend-close-display">—</dd>
+                <dt>EMA 20</dt>
+                <dd id="ind-trend-ema-display">—</dd>
+              </dl>
+            </details>
+            </div>
+          </details>
+
+        <!-- Indicators -->
+        <details class="panel-details sidebar-section">
+          <summary>Indicators</summary>
+          <div class="panel-body">
+            <p id="ind-warmup" class="warmup-note" hidden>
+              We need more finished candles before these readings stabilize.
+            </p>
+            <p class="sidebar-lead muted">
+              Short summaries below; open each block for the exact values your platform uses.
+            </p>
+
+            <h3 class="sidebar-subhead">RSI — stretch and bounce context</h3>
+            <p class="ind-plain-summary" id="ind-rsi-plain">—</p>
+            <details class="nested-details nested-details--tight">
+              <summary>RSI value (14)</summary>
+              <p class="ind-value ind-value--inline" id="ind-rsi">—</p>
+            </details>
+
+            <h3 class="sidebar-subhead">MACD — momentum</h3>
+            <p class="ind-plain-summary" id="ind-macd-plain">—</p>
+            <details class="nested-details nested-details--tight">
+              <summary>MACD lines &amp; histogram</summary>
+              <dl class="debug-grid ind-macd-grid">
+                <dt>Main line</dt>
+                <dd id="ind-macd-line">—</dd>
+                <dt>Signal line</dt>
+                <dd id="ind-macd-signal">—</dd>
+                <dt>Histogram</dt>
+                <dd id="ind-macd-hist">—</dd>
+              </dl>
+            </details>
+
+            <h3 class="sidebar-subhead">Bollinger — volatility envelope</h3>
+            <p class="ind-plain-summary" id="ind-bb-plain">—</p>
+            <details class="nested-details nested-details--tight">
+              <summary>Band prices</summary>
+              <dl class="debug-grid">
+                <dt>Upper</dt>
+                <dd id="ind-bb-upper">—</dd>
+                <dt>Middle</dt>
+                <dd id="ind-bb-middle">—</dd>
+                <dt>Lower</dt>
+                <dd id="ind-bb-lower">—</dd>
+              </dl>
+            </details>
+
+            <h3 class="sidebar-subhead">Structure — swing bias</h3>
+            <p class="ind-plain-summary" id="ind-structure-plain">—</p>
+            <details class="nested-details nested-details--tight">
+              <summary>Structure rule (raw)</summary>
+              <p id="ind-structure-detail" class="strat-detail-body">—</p>
+            </details>
+
+            <details class="nested-details nested-details--tight">
+              <summary>Latest candle (OHLCV)</summary>
+              <dl class="debug-grid">
+                <dt>Open</dt>
+                <dd id="dbg-open">—</dd>
+                <dt>High</dt>
+                <dd id="dbg-high">—</dd>
+                <dt>Low</dt>
+                <dd id="dbg-low">—</dd>
+                <dt>Close</dt>
+                <dd id="dbg-close">—</dd>
+                <dt>Volume</dt>
+                <dd id="dbg-volume">—</dd>
+              </dl>
+            </details>
+
+            <details class="nested-details nested-details--tight">
+              <summary>Data freshness</summary>
+              <dl class="ind-meta ind-meta--compact">
+                <dt>Bars in window</dt>
+                <dd id="ind-bars">—</dd>
+                <dt>Minimum needed</dt>
+                <dd id="ind-need">—</dd>
+                <dt>Last bar (Unix)</dt>
+                <dd id="ind-asof">—</dd>
+              </dl>
+            </details>
+          </div>
+        </details>
+
+        <details class="panel-details sidebar-section">
+          <summary>Raw strategy breakdown</summary>
+          <div class="panel-body">
+            <p class="sidebar-lead muted">
+              Each row is one weighted leg (trend, reversal, momentum, bands, structure). Numbers here are
+              transparent and rule-based — no AI.
+            </p>
+            <div id="strat-raw-breakdown-list" class="strat-strategy-list"></div>
+          </div>
+        </details>
+
+        <details class="panel-details sidebar-section" id="recent-signals-details" open>
+          <summary>Recent signals</summary>
+          <div class="panel-body">
+            <p class="sidebar-lead muted">
+              Logged final calls from disk. Click a row to focus the candle and highlight the marker when it is
+              on the chart.
+            </p>
+            <div class="recent-filters" id="recent-signals-filters">
+              <div class="recent-filter-row">
+                <span class="recent-filter-label" id="recent-filter-actions-label">Action</span>
+                <div
+                  class="recent-filter-chips"
+                  id="recent-filter-actions"
+                  role="group"
+                  aria-labelledby="recent-filter-actions-label"
+                >
+                  <button type="button" class="recent-chip" data-action-filter="all" aria-pressed="true">
+                    All
+                  </button>
+                  <button type="button" class="recent-chip" data-action-filter="buy" aria-pressed="false">
+                    Buy
+                  </button>
+                  <button type="button" class="recent-chip" data-action-filter="sell" aria-pressed="false">
+                    Sell
+                  </button>
+                  <button type="button" class="recent-chip" data-action-filter="exit" aria-pressed="false">
+                    Exit
+                  </button>
+                </div>
+              </div>
+              <div class="recent-filter-row recent-filter-row--tf">
+                <label class="recent-filter-label" for="recent-filter-tf">Timeframe</label>
+                <select id="recent-filter-tf" class="recent-tf-select" aria-label="Filter by timeframe">
+                  <option value="">All timeframes</option>
+                </select>
+                <button type="button" class="recent-refresh-btn" id="recent-signals-refresh">Refresh</button>
+              </div>
+            </div>
+            <p id="recent-signals-loading" class="recent-signals-loading" hidden>Loading…</p>
+            <p id="recent-signals-empty" class="recent-signals-empty" hidden>
+              No logged signals yet.
+            </p>
+            <div id="recent-signals-list" class="recent-signals-list" role="list"></div>
+          </div>
+        </details>
+
+        <!-- Backtest (research — collapsible) -->
+        <details class="panel-details sidebar-section" id="backtest-section">
+          <summary>Backtest results (local)</summary>
+          <div class="panel-body">
+            <p class="sidebar-lead muted">
+              Replays REST candles through the same engine and trade-plan rules as paper mode. Pick a timeframe for
+              the chart below, or compare all timeframes to see which had the highest cumulative return in this window.
+            </p>
+            <div class="bt-controls">
+              <label class="bt-label" for="bt-interval">Timeframe</label>
+              <select id="bt-interval" class="bt-select" aria-label="Backtest timeframe">
+                <option value="1m">1m</option>
+                <option value="5m" selected>5m</option>
+                <option value="10m">10m</option>
+                <option value="15m">15m</option>
+                <option value="30m">30m</option>
+                <option value="1d">1d</option>
+              </select>
+              <label class="bt-label" for="bt-limit">Bars</label>
+              <input id="bt-limit" class="bt-input" type="number" min="80" max="1000" value="600" aria-label="Bar count" />
+              <button type="button" class="bt-run-btn" id="bt-run-btn">Run</button>
+              <button type="button" class="bt-compare-btn" id="bt-compare-btn">Compare all</button>
+            </div>
+            <label class="bt-check-label bt-check-row">
+              <input type="checkbox" id="bt-include-trades" />
+              Show closed trades table
+            </label>
+            <p id="bt-status" class="bt-status" hidden></p>
+            <p id="bt-note" class="bt-note"></p>
+
+            <div class="bt-dash" id="bt-dash">
+              <div class="bt-dash-kpis" role="group" aria-label="Backtest summary">
+                <div class="bt-kpi">
+                  <span class="bt-kpi-label">Total trades</span>
+                  <span class="bt-kpi-val" id="bt-kpi-trades">—</span>
+                </div>
+                <div class="bt-kpi">
+                  <span class="bt-kpi-label">Win rate</span>
+                  <span class="bt-kpi-val" id="bt-kpi-winrate">—</span>
+                </div>
+                <div class="bt-kpi">
+                  <span class="bt-kpi-label">Profit factor</span>
+                  <span class="bt-kpi-val" id="bt-kpi-pf">—</span>
+                </div>
+                <div class="bt-kpi">
+                  <span class="bt-kpi-label">Max drawdown</span>
+                  <span class="bt-kpi-val" id="bt-kpi-dd">—</span>
+                </div>
+                <div class="bt-kpi">
+                  <span class="bt-kpi-label">Total return</span>
+                  <span class="bt-kpi-val" id="bt-kpi-ret">—</span>
+                </div>
+                <div class="bt-kpi bt-kpi--muted">
+                  <span class="bt-kpi-label">Open at end</span>
+                  <span class="bt-kpi-val" id="bt-kpi-open">—</span>
+                </div>
+              </div>
+
+              <div class="bt-best-banner" id="bt-best-banner" hidden>
+                <span class="bt-best-label">Best timeframe (by total return)</span>
+                <strong class="bt-best-val" id="bt-best-interval">—</strong>
+                <span class="bt-best-meta" id="bt-best-meta"></span>
+              </div>
+
+              <div class="bt-equity-block">
+                <div class="bt-subhead">Equity curve</div>
+                <p class="bt-equity-caption muted">Cumulative simulated PnL per 1 unit (closed trades only).</p>
+                <div class="bt-equity-chart" role="img" aria-label="Equity curve">
+                  <svg
+                    id="bt-equity-svg"
+                    class="bt-equity-svg"
+                    viewBox="0 0 280 56"
+                    preserveAspectRatio="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                  ></svg>
+                </div>
+              </div>
+
+              <div class="bt-strat-block">
+                <div class="bt-subhead">Strategy contributions</div>
+                <p class="bt-strat-caption muted">
+                  When a leg’s signal matched the trade side at entry: win rate and trade count (rule-based legs).
+                </p>
+                <div class="bt-strat-wrap">
+                  <table class="bt-strat-table" aria-label="Strategy contribution stats">
+                    <thead>
+                      <tr>
+                        <th>Strategy</th>
+                        <th>Aligned</th>
+                        <th>Win %</th>
+                      </tr>
+                    </thead>
+                    <tbody id="bt-strat-body"></tbody>
+                  </table>
+                </div>
+              </div>
+
+              <details class="bt-advanced-details">
+                <summary>More metrics</summary>
+                <dl class="bt-metrics-grid">
+                  <div class="bt-m-item"><dt>Loss rate</dt><dd id="bt-m-lossrate">—</dd></div>
+                  <div class="bt-m-item"><dt>Wins / losses / BE</dt><dd id="bt-m-wl">—</dd></div>
+                  <div class="bt-m-item"><dt>Average win</dt><dd id="bt-m-avgwin">—</dd></div>
+                  <div class="bt-m-item"><dt>Average loss</dt><dd id="bt-m-avgloss">—</dd></div>
+                  <div class="bt-m-item"><dt>Avg conf (W / L / BE)</dt><dd id="bt-m-conf">—</dd></div>
+                </dl>
+              </details>
+            </div>
+
+            <div class="bt-compare-wrap" id="bt-compare-wrap" hidden>
+              <div class="bt-subhead">All timeframes</div>
+              <div class="bt-compare-scroll">
+                <table class="bt-compare-table" aria-label="Backtest compare by timeframe">
+                  <thead>
+                    <tr>
+                      <th>TF</th>
+                      <th>Trades</th>
+                      <th>Win%</th>
+                      <th>PF</th>
+                      <th>Max DD</th>
+                      <th>Return</th>
+                    </tr>
+                  </thead>
+                  <tbody id="bt-compare-body"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="bt-trades-wrap" id="bt-trades-wrap" hidden>
+              <table class="bt-trades-table" aria-label="Backtest trades">
+                <thead>
+                  <tr>
+                    <th>Side</th>
+                    <th>Outcome</th>
+                    <th>PnL</th>
+                    <th>Conf</th>
+                    <th>Signal</th>
+                  </tr>
+                </thead>
+                <tbody id="bt-trades-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </details>
+        </aside>
+
+        <div
+          class="resize-handle resize-handle--col"
+          id="resize-handle-left"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize context panel. Double-click to reset layout."
+          title="Drag to resize. Double-click to reset layout."
+          tabindex="0"
+        ></div>
+
+        <!-- CENTER: chart only -->
+        <div class="chart-column" aria-label="Price chart">
+          <div class="chart-wrap">
+            <div id="chart-toolbar" class="chart-toolbar"></div>
+            <div class="chart-trend-legend-bar" id="chart-trend-legend" aria-label="Chart trend line">
+              <span class="chart-trend-legend-swatch" aria-hidden="true"></span>
+              <span class="chart-trend-legend-text">EMA 20 — trend (close)</span>
+            </div>
+            <div
+              id="chart-container"
+              class="chart-container"
+              role="img"
+              aria-label="Price chart"
+            ></div>
+          </div>
+        </div>
+
+        <div
+          class="resize-handle resize-handle--col"
+          id="resize-handle-right"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize right column (decision, paper, assistant). Double-click to reset layout."
+          title="Drag to resize. Double-click to reset layout."
+          tabindex="0"
+        ></div>
+
+        <!-- RIGHT: decision, paper trading, assistant -->
+        <aside class="sidebar sidebar--decision sidebar--decision-minimal" aria-label="Decision and tools">
+          <header class="sidebar-header sidebar-header--compact">
+            <h2 class="sidebar-title">Decision</h2>
+            <p class="sidebar-tagline">Signal, confidence, and why.</p>
+          </header>
+
+          <div class="decision-focus">
+            <p id="strat-warmup" class="warmup-note" hidden>
+              We need a bit more price history before the engine can score this chart reliably.
+            </p>
+
+            <div id="decision-signal-block" class="decision-signal-block" data-signal="neutral">
+              <div id="strat-final-badge" class="decision-signal-badge sig-neutral" aria-live="polite">—</div>
+              <p id="decision-strength-label" class="decision-strength-label" hidden></p>
+              <div class="decision-confidence-row">
+                <span class="decision-confidence-label">Confidence</span>
+                <span id="strat-final-confidence" class="decision-confidence-value">—</span>
+              </div>
+              <p id="decision-market-note" class="decision-market-note"></p>
+            </div>
+
+            <section class="decision-block" aria-labelledby="decision-at-glance-heading">
+              <h3 id="decision-at-glance-heading" class="decision-block-title">At a glance</h3>
+              <p id="decision-short-expl" class="decision-short-expl strat-tone--neutral">—</p>
+            </section>
+
+            <section class="decision-block" aria-labelledby="decision-why-heading">
+              <h3 id="decision-why-heading" class="decision-block-title">Why this signal happened</h3>
+              <p id="strat-final-explanation" class="decision-why-text">—</p>
+            </section>
+          </div>
+
+          <details class="panel-details sidebar-section sidebar-section--paper" id="paper-trade-dock" open>
+            <summary>Paper trading (simulated)</summary>
+            <div class="panel-body">
+              <p class="sidebar-lead muted">
+                Hypothetical trades only — stored in this browser. No broker connection and no real orders.
+              </p>
+              <p id="paper-mode-banner" class="paper-mode-banner" hidden>
+                Turn on <strong>Paper trading</strong> in the status bar to open new simulated positions from
+                BUY/SELL signals. Open trades still exit on stop/target even while off.
+              </p>
+              <div class="paper-dock-kpis" aria-label="Paper PnL summary">
+                <span class="paper-dock-kpi-label">Closed performance</span>
+                <p id="paper-stats-summary" class="paper-stats-summary paper-stats-summary--dock">—</p>
+              </div>
+              <h4 class="paper-subhead">Open positions</h4>
+              <div id="paper-open-list" class="paper-trade-list"></div>
+              <h4 class="paper-subhead">Closed trades (history)</h4>
+              <div id="paper-closed-list" class="paper-trade-list"></div>
+              <button type="button" class="paper-clear-btn" id="paper-clear-btn">Clear paper history</button>
+            </div>
+          </details>
+
+          <details class="panel-details sidebar-section sidebar-section--assistant" id="assistant-dock" open>
+            <summary>Assistant</summary>
+            <div class="panel-body assistant-chat">
+              <p class="sidebar-lead muted">
+                Ask about current signal state, recent candles, and what changed in this live setup.
+              </p>
+              <div
+                id="assistant-chat-history"
+                class="assistant-chat-history"
+                role="log"
+                aria-live="polite"
+                aria-label="Assistant conversation"
+              ></div>
+              <div id="assistant-chat-loading" class="assistant-chat-loading" hidden>
+                <span class="assistant-typing-dot" aria-hidden="true"></span>
+                <span class="assistant-typing-dot" aria-hidden="true"></span>
+                <span class="assistant-typing-dot" aria-hidden="true"></span>
+                <span>Assistant is analyzing current context…</span>
+              </div>
+              <div class="assistant-prompt-row" aria-label="Prompt suggestions">
+                <button type="button" class="assistant-prompt-chip" data-chat-prompt>
+                  Why is the signal neutral?
+                </button>
+                <button type="button" class="assistant-prompt-chip" data-chat-prompt>
+                  What changed in the last few candles?
+                </button>
+                <button type="button" class="assistant-prompt-chip" data-chat-prompt>
+                  Explain this setup simply.
+                </button>
+              </div>
+              <form id="assistant-chat-form" class="assistant-chat-form" autocomplete="off">
+                <input
+                  id="assistant-chat-input"
+                  class="assistant-chat-input"
+                  type="text"
+                  maxlength="360"
+                  placeholder="Why is the signal neutral? / What changed in the last few candles? / Explain this setup simply."
+                  aria-label="Message assistant"
+                />
+                <button id="assistant-chat-send" class="assistant-chat-send" type="submit">Send</button>
+              </form>
+            </div>
+          </details>
+        </aside>
+        </div>
+      </main>
+    </div>
+
+    <section
+      id="view-investor"
+      class="app-view app-view--investor"
+      role="tabpanel"
+      aria-labelledby="tab-investor"
+      hidden
+    >
+      <header class="investor-header">
+        <h2>Investor Dashboard</h2>
+        <p id="investor-dash-subtitle" class="investor-subtitle">
+          Long-term research workspace · data mode loads from the server.
+        </p>
+        <div
+          id="investor-mode-banner"
+          class="investor-mode-banner"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        ></div>
+        <details class="investor-diagnostics-details" id="investor-diagnostics-details">
+          <summary class="investor-diagnostics-summary">Data source diagnostics</summary>
+          <div id="investor-diagnostics-panel" class="investor-diagnostics-panel" aria-label="Investor diagnostics"></div>
+        </details>
+      </header>
+
+      <section class="investor-section" aria-labelledby="investor-market-overview-title">
+        <div class="investor-section-head">
+          <h3 id="investor-market-overview-title">Market Overview</h3>
+        </div>
+        <div class="investor-overview-grid">
+          <article class="investor-card investor-kpi-card">
+            <p class="investor-kpi-label">Market regime</p>
+            <p id="investor-kpi-regime" class="investor-kpi-value">Loading data mode…</p>
+          </article>
+          <article class="investor-card investor-kpi-card">
+            <p class="investor-kpi-label">Benchmark context</p>
+            <p class="investor-kpi-value">
+              S&amp;P 500 vs Nasdaq proxies: SPY · QQQ (overview — not Top 3 stock picks).
+            </p>
+          </article>
+          <article class="investor-card investor-kpi-card">
+            <p class="investor-kpi-label">Macro tone</p>
+            <p id="investor-kpi-macro" class="investor-kpi-value">Loading data mode…</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="investor-section" aria-labelledby="investor-search-title">
+        <div class="investor-section-head">
+          <h3 id="investor-search-title">Stock Search</h3>
+        </div>
+        <div class="investor-card investor-search-card">
+          <label class="investor-search-label" for="investor-stock-search">Find stock</label>
+          <div class="investor-search-row">
+            <input
+              id="investor-stock-search"
+              class="investor-search-input"
+              type="text"
+              placeholder="Ticker or company name"
+              aria-label="Search stock"
+            />
+            <button type="button" class="investor-search-btn" id="investor-search-btn">Search</button>
+          </div>
+          <p id="investor-search-status" class="investor-search-status" hidden></p>
+          <div id="investor-search-results" class="investor-search-results" role="list"></div>
+        </div>
+      </section>
+
+      <section class="investor-section" aria-labelledby="investor-opportunities-title">
+        <div class="investor-section-head">
+          <h3 id="investor-opportunities-title">Top 3 Stock Opportunities</h3>
+        </div>
+        <p id="investor-opps-status" class="investor-panel-line">Scanning stock universe for top opportunities...</p>
+        <div id="investor-opps-list" class="investor-top3-list" role="list">
+        </div>
+      </section>
+
+      <section class="investor-section investor-bottom-grid">
+        <article class="investor-card" aria-labelledby="selected-stock-title">
+          <h3 id="selected-stock-title">Selected Stock Research Panel</h3>
+          <p class="investor-panel-line">Selected ticker: <span id="investor-selected-ticker">—</span></p>
+          <p class="investor-panel-line">Company: <span id="investor-selected-company">—</span></p>
+          <p class="investor-panel-line">Exchange: <span id="investor-selected-exchange">—</span></p>
+          <p class="investor-panel-line">Asset type: <span id="investor-selected-asset-type">—</span></p>
+          <p class="investor-panel-line">Investor score: <span id="investor-selected-score">—</span></p>
+          <p class="investor-panel-line">Rating: <span id="investor-selected-rating">—</span></p>
+          <p class="investor-panel-line">Score breakdown: <span id="investor-selected-breakdown">—</span></p>
+          <p class="investor-panel-line">
+            Why this ranked here: <span id="investor-selected-explanation">—</span>
+          </p>
+          <p class="investor-panel-line">Risk warning: <span id="investor-selected-risk">—</span></p>
+          <div class="investor-chart-section">
+            <div class="investor-chart-toolbar" role="group" aria-label="Selected stock chart range">
+              <button type="button" class="investor-range-btn investor-range-btn--active" data-range="1D">1D</button>
+              <button type="button" class="investor-range-btn" data-range="5D">5D</button>
+              <button type="button" class="investor-range-btn" data-range="1M">1M</button>
+              <button type="button" class="investor-range-btn" data-range="6M">6M</button>
+              <button type="button" class="investor-range-btn" data-range="1Y">1Y</button>
+            </div>
+            <div class="investor-chart-meta-row" aria-live="polite">
+              <span id="investor-chart-range-label" class="investor-chart-range-label">1D</span>
+              <div class="investor-chart-quote-stack">
+                <div class="investor-chart-quote-prices">
+                  <span id="investor-chart-last-price" class="investor-chart-last-price">—</span>
+                  <span class="investor-chart-delta-group">
+                    <span id="investor-chart-delta-dollar" class="investor-chart-delta-chip investor-chart-delta--neutral"
+                      >—</span
+                    >
+                    <span id="investor-chart-delta-pct" class="investor-chart-delta-chip investor-chart-delta--neutral">—</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div
+              class="investor-chart-wrap"
+              id="investor-chart-wrap"
+              role="img"
+              aria-label="Closing price line chart — not candles"
+            >
+              <svg
+                id="investor-selected-chart"
+                class="investor-selected-chart"
+                viewBox="0 0 640 248"
+                preserveAspectRatio="xMidYMid meet"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <defs>
+                  <clipPath id="investor-chart-clip">
+                    <rect id="investor-chart-clip-rect" x="0" y="0" width="640" height="248"></rect>
+                  </clipPath>
+                </defs>
+                <g id="investor-chart-grid" aria-hidden="true"></g>
+                <polyline
+                  id="investor-selected-chart-line"
+                  clip-path="url(#investor-chart-clip)"
+                  class="investor-selected-chart-line investor-selected-chart-line--neutral"
+                  points=""
+                  fill="none"
+                ></polyline>
+                <g id="investor-chart-y-labels" class="investor-chart-axis-labels"></g>
+                <g id="investor-chart-x-labels" class="investor-chart-axis-labels"></g>
+              </svg>
+              <div id="investor-chart-empty" class="investor-chart-empty">Select a stock to load closing prices.</div>
+              <pre id="investor-chart-debug-detail" class="investor-chart-debug-detail" hidden></pre>
+            </div>
+          </div>
+        </article>
+        <article class="investor-card" aria-labelledby="news-reasoning-title">
+          <h3 id="news-reasoning-title">News + Reasoning Panel</h3>
+          <p id="investor-news-status" class="investor-panel-line">Select a stock to load recent company news.</p>
+          <div id="investor-news-list" class="investor-news-list" role="list"></div>
+          <div class="investor-summary-wrap">
+            <p class="investor-summary-title">AI-style research summary (rule-based)</p>
+            <p class="investor-panel-line"><strong>What is happening:</strong> <span id="investor-summary-happening">—</span></p>
+            <p class="investor-panel-line"><strong>Why it matters:</strong> <span id="investor-summary-why">—</span></p>
+            <p class="investor-panel-line"><strong>What could help:</strong> <span id="investor-summary-help">—</span></p>
+            <p class="investor-panel-line"><strong>What could hurt:</strong> <span id="investor-summary-hurt">—</span></p>
+            <p class="investor-panel-line"><strong>Overall conclusion:</strong> <span id="investor-summary-conclusion">—</span></p>
+            <div>
+              <p class="investor-summary-title investor-summary-title--sources">Sources</p>
+              <div id="investor-summary-sources" class="investor-summary-sources" role="list"></div>
+            </div>
+          </div>
+        </article>
+      </section>
+    </section>
+
+    <!-- Hidden nodes still updated by strategy_panel.js (trade plan, folds, meta ids) -->
+    <div class="strategy-panel-ghost" aria-hidden="true">
+      <p id="strat-signal-lead" class="strat-signal-lead"></p>
+      <span id="sidebar-chart-tf"></span>
+      <span id="sidebar-live-price"></span>
+      <span id="sidebar-decision-time"></span>
+      <p id="strat-explanation-summary" class="strat-explanation-summary" hidden></p>
+      <details id="strat-final-technical" hidden>
+        <summary>Weighted score breakdown (advanced)</summary>
+        <p id="strat-final-detail" class="strat-detail-body"></p>
+      </details>
+      <details id="strat-beginner-fold" hidden>
+        <summary>Beginner walkthrough</summary>
+        <p id="strat-beginner-body" class="strat-detail-body"></p>
+      </details>
+      <div id="trade-plan-wrap" class="trade-plan-wrap" hidden>
+        <p id="trade-plan-disclaimer" class="trade-plan-disclaimer"></p>
+        <dl class="trade-plan-grid">
+          <div class="trade-plan-item">
+            <dt>Entry (idea)</dt>
+            <dd id="trade-plan-entry">—</dd>
+          </div>
+          <div class="trade-plan-item">
+            <dt>Stop loss (idea)</dt>
+            <dd id="trade-plan-stop">—</dd>
+          </div>
+          <div class="trade-plan-item">
+            <dt>Take profit (idea)</dt>
+            <dd id="trade-plan-tp">—</dd>
+          </div>
+          <div class="trade-plan-item">
+            <dt>Risk / reward</dt>
+            <dd id="trade-plan-rr">—</dd>
+          </div>
+        </dl>
+        <p id="trade-plan-risk-line" class="trade-plan-risk-line"></p>
+        <p id="trade-plan-summary" class="trade-plan-summary"></p>
+        <p id="trade-plan-detail" class="trade-plan-detail-body"></p>
+      </div>
+    </div>
+  </body>
+</html>

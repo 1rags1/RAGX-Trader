@@ -1,0 +1,10 @@
+# RAGX-Trader — Python dependencies
+# FastAPI serves HTTP + WebSocket to the browser; uvicorn runs the ASGI app.
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+# Async client for Binance Spot WebSocket streams.
+websockets>=12.0
+# Rolling history + technical indicators (RSI, MACD, Bollinger).
+pandas>=2.0.0
+# Cap below 0.4 to avoid pulling numpy>=2 on older toolchains (raise the cap if you want latest).
+pandas-ta-classic>=0.3.59,<0.4
