@@ -162,11 +162,19 @@
     const m = String(raw || "").trim();
     if (!m) return "Historical chart data is unavailable right now.";
     if (
-      /twelve data|requires twelve|historical chart requires/i.test(m) ||
-      (/finnhub|403|don't have access|historical closes unavailable|closing-price history/i.test(m) &&
-        !/twelve data/i.test(m))
+      /current api plan|unavailable on current/i.test(m) ||
+      /rate limit|api credit|429|too many requests/i.test(m)
     ) {
+      return "Historical chart unavailable on current API plan.";
+    }
+    if (/requires twelve data api key/i.test(m)) {
       return "Historical chart requires Twelve Data API key.";
+    }
+    if (/finnhub historical closes unavailable/i.test(m) && !/twelve data/i.test(m)) {
+      return "Historical chart requires Twelve Data API key.";
+    }
+    if (/twelve data http error/i.test(m)) {
+      return "Historical chart unavailable on current API plan.";
     }
     return m.length > 120 ? `${m.slice(0, 117)}…` : m;
   }

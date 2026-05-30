@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import random
+import time
 import traceback
 import urllib.error
 import urllib.parse
@@ -28,6 +29,167 @@ logger = logging.getLogger(__name__)
 MSG_MARKET_KEY_MISSING = (
     "Investor market API unavailable: set TWELVE_DATA_API_KEY or FINNHUB_API_KEY (see diagnostics)."
 )
+MSG_TWELVE_CHART_PLAN_LIMIT = "Historical chart unavailable on current API plan."
+
+# In-process cache + pacing for Twelve Data (Basic plan ≈ 8 credits/min).
+_TWELVE_TS_CACHE: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+_TWELVE_CALL_TIMESTAMPS: list[float] = []
+
+_TWELVE_RANGE_PLAN: dict[str, tuple[str, int]] = {
+    "1D": ("15min", 160),
+    "5D": ("1h", 120),
+    "1M": ("1day", 45),
+    "6M": ("1day", 190),
+    "1Y": ("1week", 60),
+}
+
+_TWELVE_EXCHANGE_ALIASES: dict[str, str] = {
+    "NYSE ARCA": "NYSE",
+    "NYSE Arca": "NYSE",
+    "NYSEARCA": "NYSE",
+    "AMEX": "NYSE",
+}
+
+
+def _twelve_redact_url(url: str) -> str:
+    try:
+        parts = urllib.parse.urlsplit(url)
+        qs = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+        safe = [(k, "***" if k.lower() == "apikey" else v) for k, v in qs]
+        return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, urllib.parse.urlencode(safe), ""))
+    except Exception:
+        return "<twelve-data-url>"
+
+
+def _twelve_max_calls_per_minute() -> int:
+    raw = (os.getenv("TWELVE_DATA_MAX_CALLS_PER_MINUTE") or "7").strip()
+    try:
+        n = int(raw)
+    except ValueError:
+        n = 7
+    return max(1, min(n, 30))
+
+
+def _twelve_cache_ttl_sec() -> float:
+    raw = (os.getenv("TWELVE_DATA_CACHE_TTL_SEC") or "300").strip()
+    try:
+        n = float(raw)
+    except ValueError:
+        n = 300.0
+    return max(30.0, min(n, 3600.0))
+
+
+def _twelve_wait_for_rate_slot() -> None:
+    """Pace outbound Twelve Data calls to stay under per-minute credit limits."""
+    limit = _twelve_max_calls_per_minute()
+    now = time.monotonic()
+    global _TWELVE_CALL_TIMESTAMPS
+    _TWELVE_CALL_TIMESTAMPS = [t for t in _TWELVE_CALL_TIMESTAMPS if now - t < 60.0]
+    if len(_TWELVE_CALL_TIMESTAMPS) < limit:
+        return
+    sleep_for = 60.0 - (now - _TWELVE_CALL_TIMESTAMPS[0]) + 0.35
+    if sleep_for > 0:
+        logger.info(
+            "Twelve Data pacing: sleeping %.1fs (%s calls in last 60s, limit %s/min)",
+            sleep_for,
+            len(_TWELVE_CALL_TIMESTAMPS),
+            limit,
+        )
+        time.sleep(sleep_for)
+        now = time.monotonic()
+        _TWELVE_CALL_TIMESTAMPS = [t for t in _TWELVE_CALL_TIMESTAMPS if now - t < 60.0]
+
+
+def _twelve_record_call() -> None:
+    _TWELVE_CALL_TIMESTAMPS.append(time.monotonic())
+
+
+def _twelve_plan_or_rate_limit(status: int | None, raw_body: str | None, data: Any | None) -> bool:
+    if status in (403, 429):
+        return True
+    blob = " ".join(
+        str(x or "")
+        for x in (
+            raw_body,
+            (data or {}).get("message") if isinstance(data, dict) else "",
+            (data or {}).get("code") if isinstance(data, dict) else "",
+        )
+    ).lower()
+    return any(
+        token in blob
+        for token in (
+            "rate limit",
+            "api credit",
+            "credit limit",
+            "run out of api",
+            "too many requests",
+            "upgrade",
+            "not available on your plan",
+            "plan does not",
+        )
+    )
+
+
+def _twelve_error_payload(
+    sym: str,
+    rng: str,
+    td_interval: str,
+    *,
+    message: str,
+    debug_detail: str | None = None,
+    plan_limited: bool = False,
+    http_status: int | None = None,
+) -> dict[str, Any]:
+    return {
+        "symbol": sym,
+        "interval": rng,
+        "points": [],
+        "resolution": td_interval,
+        "provider": "twelve_data_chart",
+        "error": True,
+        "message": message,
+        "demo_mode": False,
+        "debug_detail": debug_detail,
+        "data_source": "twelve_data",
+        "plan_limited": plan_limited,
+        "http_status": http_status,
+    }
+
+
+def _twelve_log_failure(
+    sym: str,
+    rng: str,
+    url: str,
+    status: int | None,
+    raw_body: str | None,
+    data: Any | None,
+) -> None:
+    body_snip = (raw_body or "")[:700]
+    if isinstance(data, dict) and not body_snip:
+        body_snip = json.dumps({k: data.get(k) for k in ("status", "code", "message") if k in data})[:700]
+    logger.warning(
+        "Twelve Data time_series failed symbol=%s range=%s http_status=%s url=%s response=%s",
+        sym,
+        rng,
+        status,
+        _twelve_redact_url(url),
+        body_snip or "<empty>",
+    )
+
+
+def _twelve_query_params(sym: str, td_interval: str, out_size: int, api_key: str) -> dict[str, str]:
+    params: dict[str, str] = {
+        "symbol": sym,
+        "interval": td_interval,
+        "outputsize": str(out_size),
+        "apikey": api_key.strip(),
+        "timezone": "UTC",
+    }
+    item = get_universe_item(sym) or {}
+    exch_raw = str(item.get("exchange") or "").strip()
+    if exch_raw:
+        params["exchange"] = _TWELVE_EXCHANGE_ALIASES.get(exch_raw, exch_raw)
+    return params
 
 
 def _http_get_json(url: str, timeout: float = 15.0) -> tuple[Any | None, int | None, str | None]:
@@ -74,78 +236,111 @@ def _twelve_parse_bar_time(s: str) -> int | None:
 
 def _twelve_data_time_series(api_key: str, symbol: str, interval_rng: str) -> dict[str, Any]:
     """
-    Twelve Data time_series — only invoked as Finnhub fallback. Returns Finnhub-compatible payload shape.
+    Twelve Data time_series — primary Investor chart source when TWELVE_DATA_API_KEY is set.
+    Endpoint: GET https://api.twelvedata.com/time_series
     """
     sym = symbol.upper().strip()
     rng = (interval_rng or "1M").upper().strip()
-    plan: dict[str, tuple[str, int]] = {
-        "1D": ("15min", 160),
-        "5D": ("1h", 120),
-        "1M": ("1day", 45),
-        "6M": ("1day", 190),
-        "1Y": ("1week", 60),
-    }
-    td_interval, out_size = plan.get(rng, plan["6M"])
-    params = urllib.parse.urlencode(
-        {"symbol": sym, "interval": td_interval, "outputsize": str(out_size), "apikey": api_key.strip()}
-    )
-    url = f"https://api.twelvedata.com/time_series?{params}"
-    data, status, raw_body = _http_get_json(url, timeout=20.0)
+    td_interval, out_size = _TWELVE_RANGE_PLAN.get(rng, _TWELVE_RANGE_PLAN["6M"])
+
+    cache_key = (sym, rng)
+    cached = _TWELVE_TS_CACHE.get(cache_key)
+    if cached and cached[0] > time.time():
+        return dict(cached[1])
+
+    params = _twelve_query_params(sym, td_interval, out_size, api_key)
+    url = f"https://api.twelvedata.com/time_series?{urllib.parse.urlencode(params)}"
+
+    data: Any | None = None
+    status: int | None = None
+    raw_body: str | None = None
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        _twelve_wait_for_rate_slot()
+        data, status, raw_body = _http_get_json(url, timeout=22.0)
+        _twelve_record_call()
+        if status == 429 and attempt < max_attempts - 1:
+            wait_s = min(62.0, 2.5 * (attempt + 1))
+            logger.warning(
+                "Twelve Data rate limited (429) for %s %s; retry %s/%s in %.1fs url=%s",
+                sym,
+                rng,
+                attempt + 2,
+                max_attempts,
+                wait_s,
+                _twelve_redact_url(url),
+            )
+            time.sleep(wait_s)
+            continue
+        break
+
     if isinstance(status, int) and status >= 400:
-        return {
-            "symbol": sym,
-            "interval": rng,
-            "points": [],
-            "resolution": td_interval,
-            "provider": "twelve_data_chart",
-            "error": True,
-            "message": "Twelve Data HTTP error while loading closing prices.",
-            "demo_mode": False,
-            "debug_detail": (raw_body or "")[:900],
-            "data_source": "twelve_data",
-        }
+        _twelve_log_failure(sym, rng, url, status, raw_body, data)
+        if status == 401:
+            detail = (raw_body or "")[:900]
+            if isinstance(data, dict):
+                detail = str(data.get("message") or detail)[:900]
+            return _twelve_error_payload(
+                sym,
+                rng,
+                td_interval,
+                message="Twelve Data API key rejected.",
+                debug_detail=detail or None,
+                plan_limited=False,
+                http_status=status,
+            )
+        plan_limited = _twelve_plan_or_rate_limit(status, raw_body, data)
+        msg = MSG_TWELVE_CHART_PLAN_LIMIT if plan_limited else "Twelve Data HTTP error while loading closing prices."
+        detail = (raw_body or "")[:900]
+        if isinstance(data, dict):
+            detail = str(data.get("message") or data.get("code") or detail)[:900]
+        return _twelve_error_payload(
+            sym,
+            rng,
+            td_interval,
+            message=msg,
+            debug_detail=detail or None,
+            plan_limited=plan_limited,
+            http_status=status,
+        )
+
     if not isinstance(data, dict):
-        return {
-            "symbol": sym,
-            "interval": rng,
-            "points": [],
-            "resolution": td_interval,
-            "provider": "twelve_data_chart",
-            "error": True,
-            "message": "Twelve Data request failed.",
-            "demo_mode": False,
-            "debug_detail": raw_body[:900] if isinstance(raw_body, str) else str(raw_body),
-            "data_source": "twelve_data",
-        }
+        _twelve_log_failure(sym, rng, url, status, raw_body, data)
+        return _twelve_error_payload(
+            sym,
+            rng,
+            td_interval,
+            message="Twelve Data request failed.",
+            debug_detail=raw_body[:900] if isinstance(raw_body, str) else str(raw_body),
+        )
+
     if str(data.get("status") or "").lower() == "error":
         detail = str(data.get("message") or data.get("code") or data)
-        return {
-            "symbol": sym,
-            "interval": rng,
-            "points": [],
-            "resolution": td_interval,
-            "provider": "twelve_data_chart",
-            "error": True,
-            "message": f"Twelve Data: {detail}",
-            "demo_mode": False,
-            "debug_detail": detail[:900],
-            "data_source": "twelve_data",
-        }
+        _twelve_log_failure(sym, rng, url, status, raw_body, data)
+        plan_limited = _twelve_plan_or_rate_limit(status, detail, data)
+        msg = MSG_TWELVE_CHART_PLAN_LIMIT if plan_limited else f"Twelve Data: {detail}"
+        return _twelve_error_payload(
+            sym,
+            rng,
+            td_interval,
+            message=msg,
+            debug_detail=detail[:900],
+            plan_limited=plan_limited,
+            http_status=status,
+        )
+
     meta = data.get("meta") or {}
     rows = data.get("values")
     if not isinstance(rows, list) or not rows:
-        return {
-            "symbol": sym,
-            "interval": rng,
-            "points": [],
-            "resolution": td_interval,
-            "provider": "twelve_data_chart",
-            "error": True,
-            "message": "Twelve Data returned no price rows for this range.",
-            "demo_mode": False,
-            "debug_detail": str(meta)[:500] if meta else None,
-            "data_source": "twelve_data",
-        }
+        _twelve_log_failure(sym, rng, url, status, raw_body, data)
+        return _twelve_error_payload(
+            sym,
+            rng,
+            td_interval,
+            message="Twelve Data returned no price rows for this range.",
+            debug_detail=str(meta)[:500] if meta else None,
+        )
+
     raw_points: list[dict[str, float | int]] = []
     for row in rows:
         if not isinstance(row, dict):
@@ -162,23 +357,21 @@ def _twelve_data_time_series(api_key: str, symbol: str, interval_rng: str) -> di
         if ts is None:
             continue
         raw_points.append({"time": ts, "close": round(c, 4)})
+
     pts = normalize_close_series(raw_points)
     last_n = {"1D": 80, "5D": min(160, len(pts)), "1M": len(pts), "6M": len(pts), "1Y": len(pts)}.get(rng, len(pts))
     trimmed = pts[-last_n:] if len(pts) > last_n else pts
     if len(trimmed) < 2:
-        return {
-            "symbol": sym,
-            "interval": rng,
-            "points": [],
-            "resolution": td_interval,
-            "provider": "twelve_data_chart",
-            "error": True,
-            "message": "Twelve Data series too sparse after normalization.",
-            "demo_mode": False,
-            "debug_detail": json.dumps(meta)[:500] if meta else None,
-            "data_source": "twelve_data",
-        }
-    return {
+        _twelve_log_failure(sym, rng, url, status, raw_body, data)
+        return _twelve_error_payload(
+            sym,
+            rng,
+            td_interval,
+            message="Twelve Data series too sparse after normalization.",
+            debug_detail=json.dumps(meta)[:500] if meta else None,
+        )
+
+    result: dict[str, Any] = {
         "symbol": sym,
         "interval": rng,
         "resolution": td_interval,
@@ -192,6 +385,16 @@ def _twelve_data_time_series(api_key: str, symbol: str, interval_rng: str) -> di
         "currency": meta.get("currency") if isinstance(meta, dict) else None,
         "exchange": meta.get("exchange") if isinstance(meta, dict) else None,
     }
+    _TWELVE_TS_CACHE[cache_key] = (time.time() + _twelve_cache_ttl_sec(), result)
+    logger.info(
+        "Twelve Data time_series ok symbol=%s range=%s interval=%s points=%s url=%s",
+        sym,
+        rng,
+        td_interval,
+        len(trimmed),
+        _twelve_redact_url(url),
+    )
+    return result
 
 
 def normalize_close_series(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -815,6 +1018,17 @@ class FinnhubMarketDataProvider(MarketDataProvider):
     def get_time_series(self, symbol: str, interval: str) -> dict[str, Any]:
         sym = symbol.upper().strip()
         rng = (interval or "1M").upper().strip()
+        td_key = (self.twelve_data_api_key or os.getenv("TWELVE_DATA_API_KEY", "").strip()) or None
+
+        # When Twelve Data is configured, use it first (Finnhub free tier blocks candles with HTTP 403).
+        if td_key:
+            td = _twelve_data_time_series(td_key, sym, rng)
+            td["provider"] = self.name
+            if not td.get("error") and len(td.get("points") or []) >= 2:
+                td["data_source"] = "twelve_data"
+                return td
+            return td
+
         fh = self._finnhub_candles(sym, rng)
         fh_ok = not fh.get("error") and len(fh.get("points") or []) >= 2
         if fh_ok:
@@ -822,35 +1036,9 @@ class FinnhubMarketDataProvider(MarketDataProvider):
             if "data_source" not in fh:
                 fh["data_source"] = "finnhub"
             return fh
-        td_key = (self.twelve_data_api_key or os.getenv("TWELVE_DATA_API_KEY", "").strip()) or None
-        if td_key:
-            td = _twelve_data_time_series(td_key, sym, rng)
-            if not td.get("error") and len(td.get("points") or []) >= 2:
-                note = fh.get("message") or ""
-                fh_detail = fh.get("debug_detail") or ""
-                combo = "; ".join(x for x in (note, f"Finnhub fallback note: {fh_detail[:200]}") if x)
-                td["provider"] = self.name
-                td["data_source"] = "twelve_data"
-                td["message"] = None
-                td["upstream_note"] = combo[:900] if combo else None
-                return td
-            if td.get("error"):
-                fh["debug_detail"] = (
-                    (fh.get("debug_detail") or "") + " | Twelve Data: " + (td.get("debug_detail") or td.get("message") or "")
-                )[-1400:]
-                fh_msg = str(fh.get("message") or "").strip()
-                td_msg = str(td.get("message") or "").strip()
-                joined = [m for m in (fh_msg, td_msg and f"Twelve Data: {td_msg}") if m]
-                fh["message"] = (
-                    " · ".join(joined)
-                    if joined
-                    else "Closing-price history unavailable (Finnhub and Twelve Data both failed)."
-                )
-            fh["fallback_attempted"] = "twelve_data"
-        elif fh.get("error"):
-            detail = str(fh.get("debug_detail") or fh.get("message") or "")
-            if "403" in detail or "403" in str(fh.get("message") or ""):
-                fh["message"] = "Historical chart requires Twelve Data API key."
+        detail = str(fh.get("debug_detail") or fh.get("message") or "")
+        if fh.get("error") and ("403" in detail or "403" in str(fh.get("message") or "")):
+            fh["message"] = "Historical chart requires Twelve Data API key."
         fh["demo_mode"] = False
         if "message" not in fh or fh.get("message") is None:
             fh["message"] = "Closing-price history unavailable for this symbol/range."
