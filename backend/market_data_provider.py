@@ -850,10 +850,7 @@ class FinnhubMarketDataProvider(MarketDataProvider):
         elif fh.get("error"):
             detail = str(fh.get("debug_detail") or fh.get("message") or "")
             if "403" in detail or "403" in str(fh.get("message") or ""):
-                fh["message"] = (
-                    "Finnhub closing-price history is not on your plan. "
-                    "Add TWELVE_DATA_API_KEY for automatic chart fallback."
-                )
+                fh["message"] = "Historical chart requires Twelve Data API key."
         fh["demo_mode"] = False
         if "message" not in fh or fh.get("message") is None:
             fh["message"] = "Closing-price history unavailable for this symbol/range."

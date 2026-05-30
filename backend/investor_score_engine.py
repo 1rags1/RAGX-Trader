@@ -1,5 +1,5 @@
 """
-Investor scoring — 6–12 month watchlist research (not short-term trading).
+Investor scoring — long-term watchlist research (not short-term trading).
 
 Additive model (100 pts):
   long-term trend · company quality · news narrative · risk control ·
@@ -16,7 +16,7 @@ from backend.investor_universe import is_eligible_stock_opportunity
 
 RESEARCH_DISCLAIMER = "This is research support, not financial advice."
 
-OUTLOOK_LABEL = "6–12 Month Outlook"
+OUTLOOK_LABEL = "Long-Term Outlook"
 
 SCORE_PILLAR_DEFS: tuple[tuple[str, str, float], ...] = (
     ("long_term_trend_pts", "Long-term trend", 25.0),
@@ -181,9 +181,9 @@ def _long_term_trend_pts(total_return: float, rel_vs_benchmark: float) -> tuple[
     pts = _clamp(base + rel_bonus, 0.0, 25.0)
     pct = total_return * 100.0
     note = (
-        f"6–12M price path is up {pct:.1f}% over the selected window"
+        f"Long-term price path is up {pct:.1f}% over the selected window"
         if pct >= 0
-        else f"6–12M price path is down {abs(pct):.1f}% over the selected window"
+        else f"Long-term price path is down {abs(pct):.1f}% over the selected window"
     )
     if rel_vs_benchmark > 0.03:
         note += "; relative strength vs SPY on the same window."
@@ -254,7 +254,7 @@ def _risk_control_pts(
         pts += 2.0
     pts = _clamp(pts, 0.0, 15.0)
     if pts >= 12:
-        note = "volatility is manageable for a 6–12 month hold horizon"
+        note = "volatility is manageable for a long-term hold horizon"
     elif pts >= 8:
         note = "moderate volatility — size positions with a long-term risk budget"
     else:
@@ -339,7 +339,7 @@ def _non_equity_fallback(symbol: str, profile: dict[str, Any] | None) -> dict[st
         "symbol": sym,
         "score": 28,
         "rating": "Cautious",
-        "explanation": "Not modeled as an individual-stock 6–12 month watchlist candidate.",
+        "explanation": "Not modeled as an individual-stock long-term watchlist candidate.",
         "why_ranked": (
             f"{sym} is screened out of the equity watchlist universe (benchmark/ETF or non-equity profile). "
             f"Use for context only — {OUTLOOK_LABEL}."
@@ -428,7 +428,7 @@ def build_investor_score(
     if narrative_raw < 0.4:
         risk_factors.append("headline narrative is weak or cautious")
     if risk_pts < 8:
-        risk_factors.append("volatility may stress a 6–12 month hold")
+        risk_factors.append("volatility may stress a long-term hold")
     if data_pts < 5:
         risk_factors.append("research inputs are incomplete")
     if not risk_factors:

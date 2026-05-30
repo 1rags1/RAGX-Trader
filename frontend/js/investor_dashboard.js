@@ -37,7 +37,7 @@
     return pct > 0 ? "up" : "down";
   }
 
-  const INVESTOR_OUTLOOK_TITLE = "6–12 Month Outlook";
+  const INVESTOR_OUTLOOK_TITLE = "Long-Term Outlook";
   const INVESTOR_RESEARCH_DISCLAIMER = "This is research support, not financial advice.";
 
   const INVESTOR_SCORE_PILLARS = [
@@ -160,11 +160,15 @@
 
   function friendlyInvestorChartError(raw) {
     const m = String(raw || "").trim();
-    if (!m) return "Closing-price history is unavailable right now.";
-    if (/finnhub.*403|candles http 403|don't have access to this resource|historical closes unavailable/i.test(m)) {
-      return "Finnhub closing prices are not on your plan. Add TWELVE_DATA_API_KEY for automatic chart fallback.";
+    if (!m) return "Historical chart data is unavailable right now.";
+    if (
+      /twelve data|requires twelve|historical chart requires/i.test(m) ||
+      (/finnhub|403|don't have access|historical closes unavailable|closing-price history/i.test(m) &&
+        !/twelve data/i.test(m))
+    ) {
+      return "Historical chart requires Twelve Data API key.";
     }
-    return m;
+    return m.length > 120 ? `${m.slice(0, 117)}…` : m;
   }
 
   /** Reject null/undefined/blank before Number() — Number(null) is 0. */
@@ -255,19 +259,7 @@
     return investorRatingVariant(rating);
   }
 
-  function formatInvestorSignedPct(pct) {
-    const n = investorPresentNumber(pct);
-    if (n === null) return "—";
-    const sign = n >= 0 ? "+" : "−";
-    return `${sign}${Math.abs(n).toFixed(2)}%`;
-  }
-
-  function deltaToneClass(pct) {
-    const n = investorPresentNumber(pct);
-    if (n === null) return "muted";
-    if (Math.abs(n) < 0.02) return "muted";
-    return n >= 0 ? "up" : "down";
-  }
+  function buildSparkPolylineAttr(vals, width, height, padX, padY) {
     if (vals.length < 2) return "";
     const min = Math.min(...vals);
     const max = Math.max(...vals);
@@ -281,6 +273,20 @@
         return `${x.toFixed(1)},${y.toFixed(1)}`;
       })
       .join(" ");
+  }
+
+  function formatInvestorSignedPct(pct) {
+    const n = investorPresentNumber(pct);
+    if (n === null) return "—";
+    const sign = n >= 0 ? "+" : "−";
+    return `${sign}${Math.abs(n).toFixed(2)}%`;
+  }
+
+  function deltaToneClass(pct) {
+    const n = investorPresentNumber(pct);
+    if (n === null) return "muted";
+    if (Math.abs(n) < 0.02) return "muted";
+    return n >= 0 ? "up" : "down";
   }
 
   function providerStatusClass(status) {
@@ -460,9 +466,6 @@
     const insiderList = document.getElementById("investor-insider-list");
     const watchlistGrid = document.getElementById("investor-watchlist-grid");
     const watchlistEmpty = document.getElementById("investor-watchlist-empty");
-    const searchWatchlistBar = document.getElementById("investor-search-watchlist-bar");
-    const searchSelectedLabel = document.getElementById("investor-search-selected-label");
-    const addWatchlistBtn = document.getElementById("investor-add-watchlist-btn");
 
     const applyThesisPayload = (payload) => {
       const thesis = payload?.thesis || {};
@@ -500,7 +503,7 @@
         thesisBadge.textContent = "…";
         thesisBadge.className = "investor-rating-badge investor-rating-badge--neutral";
       }
-      if (thesisWhy) thesisWhy.textContent = "Building 6–12 month research thesis…";
+      if (thesisWhy) thesisWhy.textContent = "Building long-term research thesis…";
       renderThesisBulletList(thesisStrengths, [], "Analyzing…");
       renderThesisBulletList(thesisRisks, [], "Analyzing…");
       if (thesisSummary) thesisSummary.textContent = "Summarizing long-term drivers…";
@@ -678,7 +681,6 @@
       selectedCompany.textContent = text(item?.company_name);
       selectedExchange.textContent = text(item?.exchange);
       selectedAssetType.textContent = text(item?.asset_type);
-      updateSearchWatchlistBar();
       if (item?.ticker) {
         void loadInvestorProfile(item.ticker);
         void loadSelectedChart(item.ticker, currentRange);
@@ -697,42 +699,40 @@
       return loadWatchlistItems().some((x) => x.ticker === sym);
     };
 
-    const updateSearchWatchlistBar = () => {
-      if (!searchWatchlistBar || !addWatchlistBtn) return;
-      if (!selectedFromSearch || !selected?.ticker) {
-        searchWatchlistBar.hidden = true;
-        return;
-      }
-      searchWatchlistBar.hidden = false;
-      if (searchSelectedLabel) {
-        const co = selected.company_name ? ` · ${selected.company_name}` : "";
-        searchSelectedLabel.textContent = `${selected.ticker}${co}`;
-      }
-      const onList = isOnWatchlist(selected.ticker);
-      addWatchlistBtn.disabled = onList;
-      addWatchlistBtn.textContent = onList ? "On Watchlist" : "Add to Watchlist";
-      addWatchlistBtn.classList.toggle("investor-add-watchlist-btn--added", onList);
+    const watchlistStarSvg = () =>
+      `<svg class="investor-watchlist-star-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>`;
+
+    const syncSearchResultStars = () => {
+      if (!results) return;
+      results.querySelectorAll(".investor-watchlist-star").forEach((btn) => {
+        const sym = btn.dataset.ticker || "";
+        const on = isOnWatchlist(sym);
+        btn.classList.toggle("investor-watchlist-star--active", on);
+        btn.setAttribute("aria-pressed", on ? "true" : "false");
+        btn.setAttribute(
+          "aria-label",
+          on ? `Remove ${sym} from My Watchlist` : `Add ${sym} to My Watchlist`
+        );
+      });
     };
 
-    const addSelectedToWatchlist = () => {
-      if (!selected?.ticker) return;
-      const sym = String(selected.ticker).trim().toUpperCase();
-      const items = loadWatchlistItems();
+    const toggleWatchlistItem = (item) => {
+      const sym = String(item?.ticker || "")
+        .trim()
+        .toUpperCase();
+      if (!sym) return;
+      let items = loadWatchlistItems();
       if (items.some((x) => x.ticker === sym)) {
-        updateSearchWatchlistBar();
-        return;
+        items = items.filter((x) => x.ticker !== sym);
+      } else {
+        items.unshift({
+          ticker: sym,
+          company_name: typeof item?.company_name === "string" ? item.company_name.trim() : "",
+          added_at: new Date().toISOString(),
+        });
       }
-      let companyName = typeof selected.company_name === "string" ? selected.company_name.trim() : "";
-      if (!companyName && selectedCompany && selectedCompany.textContent && selectedCompany.textContent !== "—") {
-        companyName = selectedCompany.textContent.trim();
-      }
-      items.unshift({
-        ticker: sym,
-        company_name: companyName,
-        added_at: new Date().toISOString(),
-      });
       saveWatchlistItems(items);
-      updateSearchWatchlistBar();
+      syncSearchResultStars();
       void renderWatchlist();
     };
 
@@ -743,7 +743,7 @@
       if (!sym) return;
       const next = loadWatchlistItems().filter((x) => x.ticker !== sym);
       saveWatchlistItems(next);
-      updateSearchWatchlistBar();
+      syncSearchResultStars();
       void renderWatchlist();
     };
 
@@ -768,7 +768,7 @@
       const outlook =
         (typeof scored?.explanation === "string" && scored.explanation.trim()) ||
         (typeof scored?.why_ranked === "string" && scored.why_ranked.trim()) ||
-        "6–12 month outlook unavailable — select for full research.";
+        "Long-term outlook unavailable — select for full research.";
       return {
         ticker: sym,
         company_name:
@@ -933,9 +933,9 @@
       clearInvestorSvgLayers();
       if (!chartEmpty) return;
       chartEmpty.hidden = false;
-      chartEmpty.classList.remove("investor-chart-empty--error", "investor-chart-empty--loading");
+      chartEmpty.classList.remove("investor-chart-empty--error", "investor-chart-empty--loading", "investor-chart-empty--info");
       if (variant === "loading") chartEmpty.classList.add("investor-chart-empty--loading");
-      else if (variant === "error") chartEmpty.classList.add("investor-chart-empty--error");
+      else if (variant === "info" || variant === "error") chartEmpty.classList.add("investor-chart-empty--info");
       chartEmpty.textContent = variant === "loading" ? "" : message || "";
       if (variant === "loading") loadingQuoteStrip();
       else neutralQuoteStrip();
@@ -1223,7 +1223,7 @@
       if (chartWrap) chartWrap.setAttribute("aria-label", aria);
 
       chartEmpty.hidden = true;
-      chartEmpty.classList.remove("investor-chart-empty--error", "investor-chart-empty--loading");
+      chartEmpty.classList.remove("investor-chart-empty--error", "investor-chart-empty--loading", "investor-chart-empty--info");
     };
 
     const loadSelectedChart = async (symbol, range) => {
@@ -1253,7 +1253,7 @@
             httpMsg ||
             "Request failed.";
           setChartDebugDetail(isInvestorChartDebug() ? debugLine : "");
-          showChartOverlay(friendlyInvestorChartError(httpMsg) || `HTTP ${res.status}`, "error");
+          showChartOverlay(friendlyInvestorChartError(httpMsg) || `HTTP ${res.status}`, "info");
           return;
         }
         if (payload?.error) {
@@ -1266,7 +1266,7 @@
             payload.debug_detail ||
             msg;
           setChartDebugDetail(isInvestorChartDebug() ? debugLine : "");
-          showChartOverlay(friendlyInvestorChartError(msg), "error");
+          showChartOverlay(friendlyInvestorChartError(msg), "info");
           return;
         }
         const raw = Array.isArray(payload?.points) ? payload.points : [];
@@ -1277,7 +1277,7 @@
       } catch (e) {
         const detail = e && e.message ? String(e.message) : String(e);
         setChartDebugDetail(isInvestorChartDebug() ? detail : "");
-        showChartOverlay(`Chart request failed (${detail}).`.slice(0, 460), "error");
+        showChartOverlay(`Chart request failed (${detail}).`.slice(0, 460), "info");
       } finally {
         void refreshInvestorDiagnostics();
       }
@@ -1538,7 +1538,7 @@
         selectedBreakdown.appendChild(row);
       }
       if (selectedExplanation) {
-        selectedExplanation.textContent = "Building 6–12 month research view…";
+        selectedExplanation.textContent = "Building long-term research view…";
       }
       if (selectedRisk) selectedRisk.textContent = "Assessing long-term risk factors…";
     };
@@ -1620,6 +1620,7 @@
           return Number.isFinite(n) ? n : NaN;
         })
         .filter((v) => Number.isFinite(v));
+      if (vals.length < 2) return "";
       let pct =
         typeof item?.period_return_percent === "number" && Number.isFinite(item.period_return_percent)
           ? item.period_return_percent
@@ -1627,17 +1628,12 @@
       const trend = trendStrokeClassFromPct(pct);
       const pctText =
         pct === null || pct === undefined || !Number.isFinite(Number(pct))
-          ? "Unavailable"
+          ? "—"
           : formatSignedPeriodPct(pct);
       const polyClass = `investor-opp-spark-line investor-opp-spark-line--${trend}`;
       const intervalHint = opportunitiesIntervalLabel || "Period";
-      let svgInner;
-      if (vals.length >= 2) {
-        const attr = buildSparkPolylineAttr(vals, 120, 36, 2, 3);
-        svgInner = `<svg class="investor-opp-spark-svg" viewBox="0 0 120 36" preserveAspectRatio="none" aria-hidden="true"><polyline class="${polyClass}" points="${attr}" /></svg>`;
-      } else {
-        svgInner = `<svg class="investor-opp-spark-svg investor-opp-spark-svg--empty" viewBox="0 0 120 36" aria-hidden="true"><text class="investor-opp-spark-empty" x="60" y="20" text-anchor="middle">Insufficient data</text></svg>`;
-      }
+      const attr = buildSparkPolylineAttr(vals, 120, 36, 2, 3);
+      const svgInner = `<svg class="investor-opp-spark-svg" viewBox="0 0 120 36" preserveAspectRatio="none" aria-hidden="true"><polyline class="${polyClass}" points="${attr}" /></svg>`;
       const escHint = escapeHtml(intervalHint);
       return `
         <div class="investor-opp-spark-row">
@@ -1665,13 +1661,13 @@
       card.className = `investor-card investor-opp-card investor-opp-card--${variant}`;
       card.setAttribute("role", "listitem");
 
-      const unavailable = "Unavailable";
+      const dash = "—";
       const trimStr = (v) => (typeof v === "string" ? v.trim() : "");
       const rawRating = trimStr(item?.rating_badge) || trimStr(item?.rating);
-      const ratingText = rawRating ? normalizeInvestorRating(rawRating) : unavailable;
+      const ratingText = rawRating ? normalizeInvestorRating(rawRating) : dash;
       const scoreNum = Number(item?.score);
-      const scoreText = Number.isFinite(scoreNum) ? String(scoreNum) : unavailable;
-      const companyText = trimStr(item?.company_name) || unavailable;
+      const scoreText = Number.isFinite(scoreNum) ? String(scoreNum) : dash;
+      const companyText = trimStr(item?.company_name) || dash;
 
       const formatUsd = (v) => {
         const n = investorPresentNumber(v);
@@ -1714,7 +1710,7 @@
       scorePill.className = "investor-opp-scorepill";
       const scoreLab = document.createElement("span");
       scoreLab.className = "investor-opp-scorepill-lab";
-      scoreLab.textContent = "6–12M score";
+      scoreLab.textContent = "Score";
       const scoreVal = document.createElement("span");
       scoreVal.className = "investor-opp-scorepill-val";
       scoreVal.textContent = scoreText;
@@ -1742,7 +1738,7 @@
       const lastVal = document.createElement("span");
       lastVal.className = "investor-opp-last-val";
       lastVal.textContent =
-        trimStr(item?.current_price_display) || formatUsd(item?.current_price) || unavailable;
+        trimStr(item?.current_price_display) || formatUsd(item?.current_price) || dash;
       last.appendChild(lastLabel);
       last.appendChild(lastVal);
 
@@ -1753,21 +1749,19 @@
       const usd = document.createElement("span");
       usd.className = `investor-opp-delta investor-opp-delta--${dt}`;
       usd.textContent =
-        trimStr(item?.daily_change_dollars_display) || formatSignedUsd(item?.daily_change_dollar) || unavailable;
+        trimStr(item?.daily_change_dollars_display) || formatSignedUsd(item?.daily_change_dollar) || dash;
 
       const pctp = document.createElement("span");
       pctp.className = `investor-opp-delta investor-opp-delta--${dt}`;
       pctp.textContent =
-        trimStr(item?.daily_change_percent_display) || formatSignedPct(item?.daily_change_percent) || unavailable;
+        trimStr(item?.daily_change_percent_display) || formatSignedPct(item?.daily_change_percent) || dash;
 
       deltas.appendChild(usd);
       deltas.appendChild(pctp);
       priceWrap.appendChild(last);
       priceWrap.appendChild(deltas);
 
-      const sparkHost = document.createElement("div");
-      sparkHost.className = "investor-opp-spark-host";
-      sparkHost.innerHTML = opportunitySparkRowHtml(item);
+      const sparkHtml = opportunitySparkRowHtml(item);
 
       const thesis = document.createElement("div");
       thesis.className = "investor-opp-outlook-block";
@@ -1889,7 +1883,12 @@
 
       card.appendChild(head);
       card.appendChild(priceWrap);
-      card.appendChild(sparkHost);
+      if (sparkHtml) {
+        const sparkHost = document.createElement("div");
+        sparkHost.className = "investor-opp-spark-host";
+        sparkHost.innerHTML = sparkHtml;
+        card.appendChild(sparkHost);
+      }
       card.appendChild(thesis);
       card.appendChild(tierLine);
       card.appendChild(newsHead);
@@ -1924,7 +1923,7 @@
     };
 
     const loadOpportunities = async () => {
-      if (oppsStatus) oppsStatus.textContent = "Ranking watchlist candidates for a 6–12 month outlook…";
+      if (oppsStatus) oppsStatus.textContent = "Ranking watchlist candidates for long-term research…";
       if (oppsList) oppsList.innerHTML = "";
       const oppsTitle = document.getElementById("investor-opportunities-title");
       try {
@@ -1945,7 +1944,7 @@
           void refreshInvestorDiagnostics();
           return;
         }
-        const sub = payload?.list_subheading || "Ranked for a 6–12 month research outlook.";
+        const sub = payload?.list_subheading || "Ranked for long-term investor research.";
         const disclaimer = payload?.research_disclaimer || "This is research support, not financial advice.";
         const dataNote = payload?.data_quality_note ? ` ${payload.data_quality_note}` : "";
         if (oppsStatus) {
@@ -1965,16 +1964,43 @@
       results.innerHTML = "";
       if (!Array.isArray(items) || !items.length) return;
       items.forEach((item) => {
-        const row = document.createElement("button");
-        row.type = "button";
+        const sym = String(item?.ticker || "")
+          .trim()
+          .toUpperCase();
+        const row = document.createElement("div");
         row.className = "investor-search-result";
         row.setAttribute("role", "listitem");
-        row.innerHTML = `
+
+        const body = document.createElement("button");
+        body.type = "button";
+        body.className = "investor-search-result-body";
+        body.innerHTML = `
           <span class="investor-search-result-ticker">${text(item.ticker)}</span>
           <span class="investor-search-result-company">${text(item.company_name)}</span>
           <span class="investor-search-result-meta">${text(item.exchange)} • ${text(item.type || item.asset_type)}</span>
         `;
-        row.addEventListener("click", () => setSelected(item, { fromSearch: true }));
+        body.addEventListener("click", () => setSelected(item, { fromSearch: true }));
+
+        const starBtn = document.createElement("button");
+        starBtn.type = "button";
+        starBtn.className = "investor-watchlist-star";
+        starBtn.dataset.ticker = sym;
+        starBtn.innerHTML = watchlistStarSvg();
+        if (isOnWatchlist(sym)) {
+          starBtn.classList.add("investor-watchlist-star--active");
+          starBtn.setAttribute("aria-pressed", "true");
+          starBtn.setAttribute("aria-label", `Remove ${sym} from My Watchlist`);
+        } else {
+          starBtn.setAttribute("aria-pressed", "false");
+          starBtn.setAttribute("aria-label", `Add ${sym} to My Watchlist`);
+        }
+        starBtn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          toggleWatchlistItem(item);
+        });
+
+        row.appendChild(body);
+        row.appendChild(starBtn);
         results.appendChild(row);
       });
     };
@@ -2021,12 +2047,6 @@
         if (ev.key !== "Enter") return;
         ev.preventDefault();
         void runSearch();
-      });
-    }
-
-    if (addWatchlistBtn) {
-      addWatchlistBtn.addEventListener("click", () => {
-        addSelectedToWatchlist();
       });
     }
 

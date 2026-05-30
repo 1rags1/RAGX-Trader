@@ -632,7 +632,7 @@
       <header class="investor-header">
         <h2>Investor Dashboard</h2>
         <p id="investor-dash-subtitle" class="investor-subtitle">
-          6–12 month research workspace · watchlist rankings, not short-term trade signals.
+          Long-term research workspace · watchlist rankings, not short-term trade signals.
         </p>
         <div
           id="investor-mode-banner"
@@ -650,7 +650,7 @@
       <section class="investor-section" aria-labelledby="investor-watchlist-title">
         <div class="investor-section-head">
           <h3 id="investor-watchlist-title">My Watchlist</h3>
-          <p class="investor-section-sub">6–12 month research list · saved locally in your browser</p>
+          <p class="investor-section-sub">Long-term research list · saved locally in your browser</p>
         </div>
         <div
           id="investor-watchlist-empty"
@@ -687,20 +687,6 @@
             <button type="button" class="investor-search-btn" id="investor-search-btn">Search</button>
           </div>
           <p id="investor-search-status" class="investor-search-status" hidden></p>
-          <div
-            id="investor-search-watchlist-bar"
-            class="investor-search-watchlist-bar"
-            hidden
-          >
-            <span id="investor-search-selected-label" class="investor-search-selected-label"></span>
-            <button
-              type="button"
-              id="investor-add-watchlist-btn"
-              class="investor-add-watchlist-btn"
-            >
-              Add to Watchlist
-            </button>
-          </div>
           <div id="investor-search-results" class="investor-search-results" role="list"></div>
         </div>
       </section>
@@ -710,7 +696,7 @@
           <h3 id="investor-opportunities-title">Watchlist candidates</h3>
         </div>
         <p id="investor-opps-status" class="investor-panel-line">
-          Ranking screened stocks for a 6–12 month outlook… This is research support, not financial advice.
+          Ranking screened stocks for long-term research… This is research support, not financial advice.
         </p>
         <div id="investor-opps-list" class="investor-top3-list" role="list">
         </div>
@@ -726,7 +712,7 @@
 
           <section class="investor-score-panel" aria-labelledby="investor-outlook-heading">
             <div class="investor-score-panel-head">
-              <h4 id="investor-outlook-heading" class="investor-section-divider">6–12 Month Outlook</h4>
+              <h4 id="investor-outlook-heading" class="investor-section-divider">Long-Term Outlook</h4>
               <p class="investor-score-disclaimer">This is research support, not financial advice.</p>
             </div>
             <div class="investor-score-summary-row">
@@ -749,7 +735,7 @@
             ></div>
             <p class="investor-panel-line investor-outlook-line">
               <span class="investor-field-label">Why this ranks here</span>
-              <span id="investor-selected-explanation">Select a stock to load the 6–12 month research view.</span>
+              <span id="investor-selected-explanation">Select a stock to load the long-term research view.</span>
             </p>
             <p class="investor-panel-line investor-risk-line">
               <span class="investor-field-label">Risk factors</span>
@@ -846,7 +832,7 @@
           <h3 id="news-reasoning-title">News + Reasoning Panel</h3>
 
           <section class="investor-thesis" aria-labelledby="investor-thesis-heading">
-            <h4 id="investor-thesis-heading" class="investor-section-divider">6–12 Month Outlook · Investment Thesis</h4>
+            <h4 id="investor-thesis-heading" class="investor-section-divider">Long-Term Outlook</h4>
 
             <div class="investor-thesis-rating-row">
               <span class="investor-thesis-rating-label">Research rating</span>
@@ -859,7 +845,7 @@
             </div>
 
             <div class="investor-thesis-block">
-              <p class="investor-thesis-block-label">Why This Ranks Here (6–12 Month Outlook)</p>
+              <p class="investor-thesis-block-label">Why This Stock Is on the Watchlist / Ranked Here</p>
               <p id="investor-thesis-why" class="investor-thesis-copy">Select a stock to load the investment thesis.</p>
             </div>
 
@@ -881,6 +867,15 @@
             </div>
           </section>
 
+          <section class="investor-supporting-news" aria-labelledby="investor-news-heading">
+            <h4 id="investor-news-heading" class="investor-section-divider">Supporting News</h4>
+            <p id="investor-news-status" class="investor-panel-line investor-news-status-line">
+              Headlines load after you select a stock.
+            </p>
+            <p class="investor-news-subhead">Recent Headlines</p>
+            <div id="investor-news-list" class="investor-news-list" role="list"></div>
+          </section>
+
           <section class="investor-insider-section" aria-labelledby="investor-insider-heading">
             <h4 id="investor-insider-heading" class="investor-section-divider">Insider Activity</h4>
             <p
@@ -894,15 +889,6 @@
             <p class="investor-insider-edu">
               Insider activity is only one signal and should not be used alone.
             </p>
-          </section>
-
-          <section class="investor-supporting-news" aria-labelledby="investor-news-heading">
-            <h4 id="investor-news-heading" class="investor-section-divider">Supporting News</h4>
-            <p id="investor-news-status" class="investor-panel-line investor-news-status-line">
-              Headlines load after you select a stock.
-            </p>
-            <p class="investor-news-subhead">Recent Headlines</p>
-            <div id="investor-news-list" class="investor-news-list" role="list"></div>
           </section>
         </article>
       </section>

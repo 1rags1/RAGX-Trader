@@ -1,6 +1,6 @@
 """
 Rule-based investor summary generator from structured context.
-6–12 month research framing — not short-term trading signals.
+Long-term research framing — not short-term trading signals.
 """
 
 from __future__ import annotations
@@ -27,11 +27,11 @@ def _trend_label(price_trend: dict[str, Any]) -> str:
         return "long-term trend is unclear on this window"
     perf = (prices[-1] - prices[0]) / prices[0]
     if perf > 0.14:
-        return "multi-month price path supports a constructive 6–12 month setup"
+        return "multi-month price path supports a constructive long-term setup"
     if perf > 0.04:
         return "long-term trend is modestly positive"
     if perf < -0.14:
-        return "multi-month price path weakens the 6–12 month thesis"
+        return "multi-month price path weakens the long-term thesis"
     if perf < -0.04:
         return "long-term trend is slightly negative"
     return "long-term trend is mostly sideways — narrative matters more"
@@ -51,9 +51,9 @@ def _top_news(news_list: list[dict[str, Any]], limit: int = 3) -> list[dict[str,
 def _watchlist_note(rating: str) -> str:
     r = (rating or "").strip().lower()
     if "strong" in r and "watch" in r:
-        return "Strong watchlist candidate for a 6–12 month research list."
+        return "Strong watchlist candidate for long-term research."
     if r == "watch" or (r.startswith("watch") and "strong" not in r):
-        return "Worth tracking on a watchlist over a 6–12 month horizon."
+        return "Worth tracking on a watchlist for long-term research."
     if "neutral" in r:
         return "Monitor on a watchlist — evidence is mixed for now."
     if "cautious" in r:
@@ -82,7 +82,7 @@ def _concise_why_ranked(score_breakdown: dict[str, Any], trend: str, symbol: str
 def _strengths_from_breakdown(bd: dict[str, Any], trend: str, top_headline: str | None) -> list[str]:
     bits: list[str] = []
     if float(bd.get("long_term_trend_pts") or 0) >= 16:
-        bits.append("Multi-month price direction supports the 6–12 month outlook.")
+        bits.append("Multi-month price direction supports the long-term outlook.")
     elif "positive" in trend or "constructive" in trend:
         bits.append("Long-term price path is constructive relative to a flat market.")
     if float(bd.get("company_quality_pts") or 0) >= 14:
@@ -92,7 +92,7 @@ def _strengths_from_breakdown(bd: dict[str, Any], trend: str, top_headline: str 
     elif top_headline:
         bits.append(f'Recent headline context: "{top_headline[:100]}{"…" if len(top_headline) > 100 else ""}".')
     if float(bd.get("risk_control_pts") or 0) >= 12:
-        bits.append("Volatility looks manageable for a risk-adjusted 6–12 month hold.")
+        bits.append("Volatility looks manageable for a risk-adjusted long-term hold.")
     if float(bd.get("momentum_consistency_pts") or 0) >= 7:
         bits.append("Price path shows reasonable consistency over the selected window.")
     if not bits:
@@ -105,17 +105,17 @@ def _conclusion_for_rating(rating: str) -> str:
     rl = r.lower()
     if "strong" in rl and "watch" in rl:
         return (
-            "Overall, business quality, trend, and narrative align for a strong 6–12 month watchlist candidate."
+            "Overall, business quality, trend, and narrative align for a strong long-term watchlist candidate."
         )
     if rl == "watch" or (rl.startswith("watch") and "strong" not in rl):
         return "Overall, this is a balanced long-term setup worth tracking on a watchlist."
     if "neutral" in rl:
-        return "Overall, the 6–12 month case is mixed — keep researching before commitment."
+        return "Overall, the long-term case is mixed — keep researching before commitment."
     if "cautious" in rl:
         return "Overall, several pillars weaken the long-term thesis — proceed with extra diligence."
     if "avoid" in rl or "high risk" in rl:
         return "Overall, weak long-term evidence or data gaps — lower priority on a research watchlist."
-    return "Overall, treat this as research support for a 6–12 month outlook, not a trading call."
+    return "Overall, treat this as research support for a long-term outlook, not a trading call."
 
 
 def _short_executive_summary(
@@ -176,7 +176,7 @@ def generate_rule_based_summary(context: dict[str, Any], quote: dict[str, Any] |
         what += f" Recent daily change input is {change_pct}% (not used as a short-term trade signal)."
 
     why = (
-        "For a 6–12 month investor, business quality, durable trend, growth narrative, "
+        "For a long-term investor, business quality, durable trend, growth narrative, "
         "and risk-adjusted opportunity matter more than intraday noise or one-day moves."
     )
 
@@ -184,7 +184,7 @@ def generate_rule_based_summary(context: dict[str, Any], quote: dict[str, Any] |
     help_bits.append("Consistent execution and stable macro conditions could improve investor confidence.")
 
     hurt_bits = [
-        "A sustained trend reversal can weaken the 6–12 month thesis.",
+        "A sustained trend reversal can weaken the long-term thesis.",
         "Weak earnings, guidance cuts, or negative headlines can pressure the growth narrative.",
     ]
     if risk_factors:
@@ -200,7 +200,7 @@ def generate_rule_based_summary(context: dict[str, Any], quote: dict[str, Any] |
     sources = [
         {"label": "Quote feed", "type": "quote", "detail": str(quote.get("provider") or "provider layer")},
         {"label": "Price trend", "type": "time_series", "detail": str(price_trend.get("interval") or "range")},
-        {"label": "Investor score", "type": "scoring", "detail": "6–12 month investor score engine"},
+        {"label": "Investor score", "type": "scoring", "detail": "Long-term investor score engine"},
     ]
     for n in top_news:
         sources.append(

@@ -895,6 +895,21 @@ body[data-active-tab="trader"] #view-investor {
   border-radius: 8px;
   background: rgba(13, 17, 23, 0.72);
   color: var(--text);
+  padding: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  overflow: hidden;
+}
+
+.investor-search-result-body {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  font: inherit;
+  border: none;
+  background: transparent;
+  color: inherit;
   padding: 0.42rem 0.5rem;
   display: grid;
   grid-template-columns: 5rem minmax(0, 1fr);
@@ -905,9 +920,64 @@ body[data-active-tab="trader"] #view-investor {
   cursor: pointer;
 }
 
+.investor-search-result-body:hover,
 .investor-search-result:hover {
   border-color: rgba(88, 166, 255, 0.56);
   background: rgba(88, 166, 255, 0.08);
+}
+
+.investor-search-result-body:hover {
+  background: transparent;
+}
+
+.investor-search-result:hover {
+  background: rgba(88, 166, 255, 0.08);
+}
+
+.investor-watchlist-star {
+  flex-shrink: 0;
+  width: 2.35rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-left: 1px solid var(--border);
+  background: transparent;
+  color: rgba(142, 142, 147, 0.85);
+  cursor: pointer;
+  transition: color 0.14s ease, filter 0.14s ease, background 0.14s ease;
+}
+
+.investor-watchlist-star-icon {
+  width: 1rem;
+  height: 1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+  transition: fill 0.14s ease, filter 0.14s ease;
+}
+
+.investor-watchlist-star:hover {
+  color: #ffd60a;
+  background: rgba(255, 214, 10, 0.06);
+}
+
+.investor-watchlist-star:hover .investor-watchlist-star-icon {
+  filter: drop-shadow(0 0 5px rgba(255, 214, 10, 0.55));
+}
+
+.investor-watchlist-star--active {
+  color: #ffd60a;
+}
+
+.investor-watchlist-star--active .investor-watchlist-star-icon {
+  fill: currentColor;
+  filter: drop-shadow(0 0 6px rgba(255, 214, 10, 0.65));
+}
+
+.investor-watchlist-star--active:hover .investor-watchlist-star-icon {
+  filter: drop-shadow(0 0 8px rgba(255, 214, 10, 0.8));
 }
 
 .investor-search-result-ticker {
@@ -2221,9 +2291,17 @@ button.investor-opp-card {
   }
 }
 
+.investor-chart-empty.investor-chart-empty--info {
+  color: var(--muted);
+  background: rgba(13, 17, 23, 0.72);
+  text-align: center;
+  padding: 0 1rem;
+  line-height: 1.45;
+}
+
 .investor-chart-empty.investor-chart-empty--error {
-  color: #f85149;
-  background: rgba(248, 81, 73, 0.08);
+  color: var(--muted);
+  background: rgba(13, 17, 23, 0.72);
 }
 
 .investor-chart-debug-detail {

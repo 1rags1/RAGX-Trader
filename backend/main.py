@@ -1125,7 +1125,7 @@ async def api_investor_score(
     interval: str = Query("6M", min_length=2, max_length=4, description="1D, 5D, 1M, 6M, 1Y"),
 ):
     """
-    Evidence-based investor score (0..100) for a 6–12 month outlook.
+    Evidence-based investor score (0..100) for long-term research.
     Not financial advice.
     """
     market_provider = app.state.market_data_provider
@@ -1335,23 +1335,23 @@ async def api_investor_opportunities(
     if data_thin or top_score < 50:
         list_heading = "Watchlist candidates"
         list_subheading = (
-            "Ranked for a 6–12 month outlook — evidence is mixed or data is thin; "
+            "Ranked for long-term research — evidence is mixed or data is thin; "
             "research further before treating these as strong picks."
         )
     elif top_score >= 80:
         list_heading = "Strong watchlist opportunities"
         list_subheading = (
-            "Highest-scoring names on business quality, long-term trend, and narrative for a 6–12 month horizon."
+            "Highest-scoring names on business quality, long-term trend, and narrative."
         )
     elif top_score >= 65:
         list_heading = "Watchlist opportunities"
         list_subheading = (
-            "Balanced long-term setups worth tracking over a 6–12 month research window."
+            "Balanced long-term setups worth tracking on a research watchlist."
         )
     else:
         list_heading = "Watchlist candidates"
         list_subheading = (
-            "Neutral-to-mixed 6–12 month evidence — monitor before elevating on a watchlist."
+            "Mixed long-term evidence — monitor before elevating on a watchlist."
         )
 
     return {
@@ -1361,7 +1361,7 @@ async def api_investor_opportunities(
         "count": len(finalized),
         "list_heading": list_heading,
         "list_subheading": list_subheading,
-        "outlook_horizon": "6–12 Month Outlook",
+        "outlook_horizon": "Long-Term Outlook",
         "research_disclaimer": "This is research support, not financial advice.",
         "top_score": top_score,
         "average_score": round(avg_score, 1),
