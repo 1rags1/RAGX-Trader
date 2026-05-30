@@ -8,8 +8,13 @@
   const input = document.getElementById("gateCode");
   const errorEl = document.getElementById("gateError");
   const submitBtn = document.getElementById("gateSubmit");
+  const cardEl = document.querySelector(".gate-card");
 
   if (!form || !input) return;
+
+  if (cardEl) {
+    requestAnimationFrame(() => cardEl.classList.add("gate-card--ready"));
+  }
 
   function showError(message) {
     if (!errorEl) return;
@@ -51,7 +56,13 @@
       });
 
       if (res.ok) {
-        window.location.replace("/");
+        if (cardEl) {
+          cardEl.classList.add("gate-card--exit");
+        }
+        submitBtn.disabled = true;
+        setTimeout(() => {
+          window.location.replace("/");
+        }, 260);
         return;
       }
 

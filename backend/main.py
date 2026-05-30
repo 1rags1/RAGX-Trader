@@ -233,11 +233,38 @@ def _period_range_from_points(points: list[dict[str, Any]], interval_u: str) -> 
 
 def _rating_badge_class(rating: str | None) -> str:
     r = (rating or "").strip().lower()
-    if r == "bullish":
-        return "bullish"
-    if r == "cautious":
+    if "strong" in r and "watch" in r:
+        return "strong_watch"
+    if r == "watch" or (r.startswith("watch") and "strong" not in r):
+        return "watch"
+    if "avoid" in r or "high risk" in r:
+        return "high_risk"
+    if "cautious" in r:
         return "cautious"
+    if "neutral" in r:
+        return "neutral"
+    # legacy
+    if r == "bullish":
+        return "strong_watch"
+    if r == "bearish":
+        return "high_risk"
     return "neutral"
+
+
+def _total_return_from_series(ts_data: dict[str, Any] | None) -> float:
+    points = (ts_data or {}).get("points") or []
+    prices: list[float] = []
+    for p in points:
+        if not isinstance(p, dict):
+            continue
+        raw = p.get("close") if p.get("close") is not None else p.get("price")
+        try:
+            prices.append(float(raw))
+        except (TypeError, ValueError):
+            continue
+    if len(prices) < 2 or prices[0] <= 0:
+        return 0.0
+    return (prices[-1] - prices[0]) / prices[0]
 
 
 def _build_key_metrics(
@@ -1069,6 +1096,19 @@ async def api_investor_news(
     return out
 
 
+@app.get("/api/investor/insiders")
+async def api_investor_insiders(
+    symbol: str = Query(..., min_length=1, max_length=16, description="Ticker symbol"),
+):
+    """Recent SEC Form 4 insider transactions (Finnhub when configured). Research context only."""
+    provider = app.state.market_data_provider
+    payload = provider.get_insider_activity(symbol)
+    return {
+        **payload,
+        "provider": getattr(provider, "name", payload.get("provider", "unknown")),
+    }
+
+
 @app.get("/api/investor/diagnostics")
 async def api_investor_diagnostics():
     """Demo vs live mode, provider wiring, last successful investor fetches."""
@@ -1085,7 +1125,7 @@ async def api_investor_score(
     interval: str = Query("6M", min_length=2, max_length=4, description="1D, 5D, 1M, 6M, 1Y"),
 ):
     """
-    Evidence-based investor score (0..100) with cautious language.
+    Evidence-based investor score (0..100) for a 6–12 month outlook.
     Not financial advice.
     """
     market_provider = app.state.market_data_provider
@@ -1093,19 +1133,26 @@ async def api_investor_score(
     sym = symbol.upper()
     benchmark_ts = market_provider.get_time_series("SPY", interval)
     benchmark_weekly = _weekly_performance_from_series(benchmark_ts)
+    benchmark_total = _total_return_from_series(benchmark_ts)
     quote = market_provider.get_quote(sym)
     ts_data = market_provider.get_time_series(sym, interval)
     news_result = news_provider.get_company_news_result(sym)
     news = news_result.get("items", [])
     profile = market_provider.get_company_profile(sym)
+    fund = market_provider.get_opportunity_fundamentals(sym)
     scored = build_investor_score(
         symbol=sym,
         quote=quote,
         time_series=ts_data,
         news_items=news,
         profile=profile,
-        market_context={"benchmark_symbol": "SPY", "benchmark_weekly_performance": benchmark_weekly},
+        market_context={
+            "benchmark_symbol": "SPY",
+            "benchmark_weekly_performance": benchmark_weekly,
+            "benchmark_total_return": benchmark_total,
+        },
         news_feed_error=bool(news_result.get("error")),
+        fundamentals=fund,
     )
     return {
         "provider": getattr(market_provider, "name", "unknown"),
@@ -1126,19 +1173,26 @@ async def api_investor_research_summary(
     sym = symbol.upper()
     benchmark_ts = market_provider.get_time_series("SPY", interval)
     benchmark_weekly = _weekly_performance_from_series(benchmark_ts)
+    benchmark_total = _total_return_from_series(benchmark_ts)
     quote = market_provider.get_quote(sym)
     ts_data = market_provider.get_time_series(sym, interval)
     news_result = news_provider.get_company_news_result(sym)
     news = news_result.get("items", [])
     profile = market_provider.get_company_profile(sym)
+    fund = market_provider.get_opportunity_fundamentals(sym)
     scored = build_investor_score(
         symbol=sym,
         quote=quote,
         time_series=ts_data,
         news_items=news,
         profile=profile,
-        market_context={"benchmark_symbol": "SPY", "benchmark_weekly_performance": benchmark_weekly},
+        market_context={
+            "benchmark_symbol": "SPY",
+            "benchmark_weekly_performance": benchmark_weekly,
+            "benchmark_total_return": benchmark_total,
+        },
         news_feed_error=bool(news_result.get("error")),
+        fundamentals=fund,
     )
     context = build_investor_context(
         selected_ticker=sym,
@@ -1170,6 +1224,7 @@ async def api_investor_opportunities(
     news_provider = app.state.news_provider
     benchmark_ts = market_provider.get_time_series("SPY", interval)
     benchmark_weekly = _weekly_performance_from_series(benchmark_ts)
+    benchmark_total = _total_return_from_series(benchmark_ts)
     ranked: list[dict[str, Any]] = []
     saw_good_price = False
     saw_good_chart = False
@@ -1188,14 +1243,20 @@ async def api_investor_opportunities(
         if isinstance(news_result, dict) and not news_result.get("error"):
             saw_good_news = True
         news = news_result.get("items", [])
+        fund = market_provider.get_opportunity_fundamentals(sym)
         scored = build_investor_score(
             symbol=sym,
             quote=quote,
             time_series=ts_data,
             news_items=news,
             profile=profile,
-            market_context={"benchmark_symbol": "SPY", "benchmark_weekly_performance": benchmark_weekly},
+            market_context={
+                "benchmark_symbol": "SPY",
+                "benchmark_weekly_performance": benchmark_weekly,
+                "benchmark_total_return": benchmark_total,
+            },
             news_feed_error=bool(news_result.get("error")),
+            fundamentals=fund,
         )
         sorted_news: list[dict[str, Any]] = []
         first_headline = None
@@ -1265,11 +1326,50 @@ async def api_investor_opportunities(
         investor_data_health_touch(app.state, chart=True)
     if saw_good_news:
         investor_data_health_touch(app.state, news=True)
+
+    top_score = int(finalized[0].get("score") or 0) if finalized else 0
+    avg_score = (
+        sum(int(x.get("score") or 0) for x in finalized) / len(finalized) if finalized else 0.0
+    )
+    data_thin = not (saw_good_price and saw_good_chart)
+    if data_thin or top_score < 50:
+        list_heading = "Watchlist candidates"
+        list_subheading = (
+            "Ranked for a 6–12 month outlook — evidence is mixed or data is thin; "
+            "research further before treating these as strong picks."
+        )
+    elif top_score >= 80:
+        list_heading = "Strong watchlist opportunities"
+        list_subheading = (
+            "Highest-scoring names on business quality, long-term trend, and narrative for a 6–12 month horizon."
+        )
+    elif top_score >= 65:
+        list_heading = "Watchlist opportunities"
+        list_subheading = (
+            "Balanced long-term setups worth tracking over a 6–12 month research window."
+        )
+    else:
+        list_heading = "Watchlist candidates"
+        list_subheading = (
+            "Neutral-to-mixed 6–12 month evidence — monitor before elevating on a watchlist."
+        )
+
     return {
         "provider": getattr(market_provider, "name", "unknown"),
         "news_provider": getattr(news_provider, "name", "unknown"),
         "interval": interval.upper(),
         "count": len(finalized),
+        "list_heading": list_heading,
+        "list_subheading": list_subheading,
+        "outlook_horizon": "6–12 Month Outlook",
+        "research_disclaimer": "This is research support, not financial advice.",
+        "top_score": top_score,
+        "average_score": round(avg_score, 1),
+        "data_quality_note": (
+            "Live price, chart, or news feeds are incomplete — scores are provisional."
+            if data_thin
+            else None
+        ),
         "items": finalized,
     }
 

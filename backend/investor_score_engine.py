@@ -1,8 +1,9 @@
 """
-Investor scoring — evidence pillars for individual equities only.
+Investor scoring — 6–12 month watchlist research (not short-term trading).
 
-Pillars: trend, momentum, news, risk, consistency (steady directional price path).
-Thin history, gaps in news/charts, whip-saw regimes, or extreme swings cap and penalize the score so Top 3 is not inflated on noise.
+Additive model (100 pts):
+  long-term trend · company quality · news narrative · risk control ·
+  momentum consistency · data confidence
 """
 
 from __future__ import annotations
@@ -12,6 +13,41 @@ import statistics
 from typing import Any
 
 from backend.investor_universe import is_eligible_stock_opportunity
+
+RESEARCH_DISCLAIMER = "This is research support, not financial advice."
+
+OUTLOOK_LABEL = "6–12 Month Outlook"
+
+SCORE_PILLAR_DEFS: tuple[tuple[str, str, float], ...] = (
+    ("long_term_trend_pts", "Long-term trend", 25.0),
+    ("company_quality_pts", "Company quality", 20.0),
+    ("news_narrative_pts", "News sentiment", 20.0),
+    ("risk_control_pts", "Risk", 15.0),
+    ("momentum_consistency_pts", "Consistency", 10.0),
+    ("data_confidence_pts", "Data confidence", 10.0),
+)
+
+
+def _score_pillars_payload(
+    trend_pts: float,
+    quality_pts: float,
+    narrative_pts: float,
+    risk_pts: float,
+    consistency_pts: float,
+    data_pts: float,
+) -> list[dict[str, Any]]:
+    values = (trend_pts, quality_pts, narrative_pts, risk_pts, consistency_pts, data_pts)
+    out: list[dict[str, Any]] = []
+    for (key, label, max_pts), pts in zip(SCORE_PILLAR_DEFS, values, strict=True):
+        out.append(
+            {
+                "key": key,
+                "label": label,
+                "points": round(pts, 1),
+                "max_points": max_pts,
+            }
+        )
+    return out
 
 
 def _clamp(v: float, lo: float, hi: float) -> float:
@@ -44,143 +80,284 @@ def _extract_prices(points: list[dict[str, Any]]) -> list[float]:
     return prices
 
 
-def _news_sentiment_score(news_items: list[dict[str, Any]]) -> float:
-    if not news_items:
+def _total_return(prices: list[float]) -> float:
+    if len(prices) < 2 or prices[0] <= 0:
         return 0.0
-    positive_terms = ("beat", "growth", "expansion", "record", "upgrade", "strong")
-    caution_terms = ("miss", "downgrade", "lawsuit", "probe", "risk", "slowdown", "cuts")
-    score = 0.0
-    sample = news_items[:12]
+    return (prices[-1] - prices[0]) / prices[0]
+
+
+def _avg_abs_daily_move(prices: list[float]) -> float:
+    moves: list[float] = []
+    for i in range(1, len(prices)):
+        prev = prices[i - 1]
+        if prev > 0:
+            moves.append(abs((prices[i] - prev) / prev))
+    return sum(moves) / len(moves) if moves else 0.0
+
+
+def _news_narrative_score(news_items: list[dict[str, Any]]) -> tuple[float, list[str]]:
+    """Growth / quality narrative from headlines (0..1 scale)."""
+    if not news_items:
+        return 0.35, ["limited headline coverage for the growth narrative"]
+    growth_terms = (
+        "beat",
+        "growth",
+        "expansion",
+        "record",
+        "upgrade",
+        "strong",
+        "innovation",
+        "leadership",
+        "profit",
+        "revenue",
+        "guidance raise",
+        "market share",
+    )
+    caution_terms = (
+        "miss",
+        "downgrade",
+        "lawsuit",
+        "probe",
+        "slowdown",
+        "cuts",
+        "layoff",
+        "recall",
+        "investigation",
+        "warning",
+    )
+    raw = 0.0
+    notes: list[str] = []
+    sample = news_items[:14]
     for item in sample:
         text = f"{str(item.get('headline') or '').lower()} {str(item.get('summary') or '').lower()}"
-        for t in positive_terms:
+        for t in growth_terms:
             if t in text:
-                score += 1.0
+                raw += 0.18
         for t in caution_terms:
             if t in text:
-                score -= 1.0
-    return _clamp(score / max(1.0, len(sample)), -2.5, 2.5)
+                raw -= 0.16
+    if raw > 0.4:
+        notes.append("headlines skew toward growth and business momentum")
+    elif raw < -0.2:
+        notes.append("headlines include cautionary themes")
+    else:
+        notes.append("headline tone is mixed — narrative needs confirmation")
+    return _clamp(0.45 + raw * 0.35, 0.0, 1.0), notes
 
 
-def _consistency_score(prices: list[float]) -> float:
-    """
-    Measures how cleanly log-price tracks time (Pearson r × scale).
-    Choppy sideways → ~0; smooth trends → higher |component|.
-    """
+def _consistency_0_1(prices: list[float]) -> float:
     n = len(prices)
-    if n < 10 or prices[0] <= 0:
-        return 0.0
+    if n < 8 or prices[0] <= 0:
+        return 0.35
     try:
         y = [math.log(p / prices[0]) for p in prices if p > 0]
     except ValueError:
-        return 0.0
-    if len(y) < 10:
-        return 0.0
+        return 0.35
+    if len(y) < 8:
+        return 0.35
     x = list(range(len(y)))
     r = _pearson_r([float(v) for v in x], [float(v) for v in y])
-    return _clamp(r * 2.35, -2.0, 2.0)
+    return _clamp((r + 1.0) / 2.0, 0.0, 1.0)
 
 
-def _time_series_metrics(
+def _long_term_trend_pts(total_return: float, rel_vs_benchmark: float) -> tuple[float, str]:
+    """25 pts — multi-month price direction; pullbacks tolerated if trend intact."""
+    base = 8.0
+    if total_return >= 0.28:
+        base = 22.0
+    elif total_return >= 0.14:
+        base = 19.0
+    elif total_return >= 0.05:
+        base = 16.0
+    elif total_return >= 0.0:
+        base = 13.0
+    elif total_return >= -0.08:
+        base = 9.0
+    elif total_return >= -0.18:
+        base = 5.0
+    else:
+        base = 2.0
+    rel_bonus = _clamp(rel_vs_benchmark * 12.0, -3.0, 5.0)
+    pts = _clamp(base + rel_bonus, 0.0, 25.0)
+    pct = total_return * 100.0
+    note = (
+        f"6–12M price path is up {pct:.1f}% over the selected window"
+        if pct >= 0
+        else f"6–12M price path is down {abs(pct):.1f}% over the selected window"
+    )
+    if rel_vs_benchmark > 0.03:
+        note += "; relative strength vs SPY on the same window."
+    elif rel_vs_benchmark < -0.03:
+        note += "; lagging SPY on the same window."
+    return pts, note
+
+
+def _company_quality_pts(profile: dict[str, Any], fundamentals: dict[str, Any] | None) -> tuple[float, str]:
+    """20 pts — business profile, scale, and leadership proxies."""
+    fund = fundamentals or {}
+    pts = 0.0
+    populated = sum(1 for k in ("company_name", "exchange", "asset_type") if profile.get(k))
+    pts += min(8.0, populated * 2.75)
+    mc = fund.get("market_cap_usd")
+    try:
+        mc_f = float(mc) if mc is not None else None
+    except (TypeError, ValueError):
+        mc_f = None
+    if mc_f and mc_f >= 200e9:
+        pts += 7.0
+    elif mc_f and mc_f >= 50e9:
+        pts += 5.5
+    elif mc_f and mc_f >= 10e9:
+        pts += 4.0
+    elif mc_f and mc_f >= 2e9:
+        pts += 2.5
+    sector = str(fund.get("sector") or profile.get("finnhubIndustry") or "").strip()
+    if sector:
+        pts += 2.0
+    if fund.get("week52_high") is not None and fund.get("week52_low") is not None:
+        pts += 2.0
+    pts = _clamp(pts, 0.0, 20.0)
+    if mc_f and mc_f >= 50e9:
+        note = "large-cap profile supports business-quality screening"
+    elif populated >= 2:
+        note = "company profile is populated for long-term research"
+    else:
+        note = "limited company metadata — quality score uses partial inputs"
+    return pts, note
+
+
+def _risk_control_pts(
     prices: list[float],
-) -> tuple[float, float, float, float, float, float]:
-    """
-    trend_s, momentum_s, risk_s, daily_perf, weekly_perf, avg_abs_move — same semantics as prior engine.
-    """
-    if len(prices) < 6 or prices[0] <= 0:
-        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-    last = prices[-1]
-    first = prices[0]
-    total_return = (last - first) / first if first > 0 else 0.0
-    daily_ref = prices[-2] if len(prices) >= 2 else first
-    weekly_ref = prices[-6] if len(prices) >= 6 else first
-    daily_perf = (last - daily_ref) / daily_ref if daily_ref > 0 else 0.0
-    weekly_perf = (last - weekly_ref) / weekly_ref if weekly_ref > 0 else 0.0
-    n = len(prices)
-    short_n = max(3, int(n * 0.2))
-    long_n = max(short_n + 1, int(n * 0.6))
-    short_avg = sum(prices[-short_n:]) / short_n
-    long_avg = sum(prices[-long_n:]) / long_n
-    trend_raw = (short_avg - long_avg) / long_avg if long_avg else 0.0
-    abs_moves: list[float] = []
-    for i in range(1, len(prices)):
-        prev = prices[i - 1]
-        cur = prices[i]
-        if prev > 0:
-            abs_moves.append(abs((cur - prev) / prev))
-    avg_abs_move = sum(abs_moves) / len(abs_moves) if abs_moves else 0.0
-    trend_component = _clamp((trend_raw * 16.0) + (total_return * 3.5), -2.0, 2.0)
-    momentum_component = _clamp((weekly_perf * 10.0) + (daily_perf * 5.0), -2.0, 2.0)
-    risk_component = _clamp(1.35 - avg_abs_move * 40.0, -2.0, 2.0)
+    fundamentals: dict[str, Any] | None,
+) -> tuple[float, str]:
+    """15 pts — risk-adjusted opportunity; does not punish normal equity volatility."""
+    fund = fundamentals or {}
+    pts = 11.0
+    avg_move = _avg_abs_daily_move(prices) * 100.0
+    ann_vol = fund.get("annual_volatility_pct")
+    try:
+        ann_vol_f = float(ann_vol) if ann_vol is not None else None
+    except (TypeError, ValueError):
+        ann_vol_f = None
+    if ann_vol_f is not None:
+        if ann_vol_f >= 55:
+            pts -= 5.0
+        elif ann_vol_f >= 38:
+            pts -= 2.5
+        elif ann_vol_f <= 22:
+            pts += 2.0
+    elif avg_move >= 4.5:
+        pts -= 4.0
+    elif avg_move >= 3.2:
+        pts -= 2.0
+    elif avg_move <= 1.6 and len(prices) >= 8:
+        pts += 2.0
+    pts = _clamp(pts, 0.0, 15.0)
+    if pts >= 12:
+        note = "volatility is manageable for a 6–12 month hold horizon"
+    elif pts >= 8:
+        note = "moderate volatility — size positions with a long-term risk budget"
+    else:
+        note = "elevated volatility — higher drawdown risk over the outlook window"
+    return pts, note
+
+
+def _data_confidence_pts(
+    n_points: int,
+    ts_error: bool,
+    news_feed_error: bool,
+    has_news: bool,
+) -> tuple[float, list[str]]:
+    """10 pts — feed completeness, not trading signal quality."""
+    notes: list[str] = []
+    if ts_error or n_points < 4:
+        pts = 2.0
+        notes.append("price history is thin or unavailable")
+    elif n_points < 10:
+        pts = 5.0
+        notes.append("limited closing-price depth — confidence is provisional")
+    elif n_points < 20:
+        pts = 7.5
+    else:
+        pts = 9.0
+    if news_feed_error:
+        pts -= 2.0
+        notes.append("news feed error — narrative pillar discounted")
+    elif not has_news:
+        pts -= 1.0
+        notes.append("no recent headlines — narrative inferred from price/profile only")
+    return _clamp(pts, 0.0, 10.0), notes
+
+
+def _rating_from_score(score: int) -> str:
+    if score >= 80:
+        return "Strong Watch"
+    if score >= 65:
+        return "Watch"
+    if score >= 50:
+        return "Neutral"
+    if score >= 35:
+        return "Cautious"
+    return "High Risk"
+
+
+def _rating_explanation(rating: str, score: int) -> str:
+    if rating == "Strong Watch":
+        return (
+            f"Strong Watch ({score}/100): business quality, long-term trend, and news sentiment align for a "
+            f"{OUTLOOK_LABEL} watchlist candidate."
+        )
+    if rating == "Watch":
+        return (
+            f"Watch ({score}/100): balanced long-term research evidence — worth tracking over {OUTLOOK_LABEL}."
+        )
+    if rating == "Neutral":
+        return (
+            f"Neutral ({score}/100): mixed long-term signals — monitor before elevating on a research watchlist."
+        )
+    if rating == "Cautious":
+        return (
+            f"Cautious ({score}/100): several pillars weaken the {OUTLOOK_LABEL} thesis — research further first."
+        )
     return (
-        trend_component,
-        momentum_component,
-        risk_component,
-        daily_perf,
-        weekly_perf,
-        avg_abs_move,
+        f"High Risk ({score}/100): weak long-term evidence or data gaps — lower priority for a research watchlist."
     )
 
 
 def _volatility_risk_label(avg_abs_daily_move: float) -> str:
     pct = max(0.0, avg_abs_daily_move * 100.0)
-    if pct >= 2.8:
+    if pct >= 3.5:
         return "Elevated"
-    if pct >= 1.45:
+    if pct >= 2.0:
         return "Moderate"
     return "Contained"
 
 
-def _profile_score(profile: dict[str, Any]) -> float:
-    if not profile:
-        return 0.0
-    populated = sum(1 for k in ("company_name", "exchange", "asset_type") if profile.get(k))
-    return _clamp(populated * 0.25, 0.0, 0.75)
-
-
-def _score_ceiling_from_depth(n: int) -> int:
-    """Never allow “top pick” scores on a handful of bars."""
-    if n >= 52:
-        return 100
-    if n >= 30:
-        return 74
-    if n >= 20:
-        return 64
-    if n >= 12:
-        return 54
-    if n >= 6:
-        return 44
-    return 32
-
-
 def _non_equity_fallback(symbol: str, profile: dict[str, Any] | None) -> dict[str, Any]:
-    msg = (
-        "This ticker is screened out of the equity opportunity stack (benchmark/ETF or non‑equity profile). "
-        "Scores here are capped for reference only."
-    )
     sym = symbol.upper()
     return {
         "symbol": sym,
-        "score": 22,
+        "score": 28,
         "rating": "Cautious",
-        "explanation": "Not modeled as an individual-stock opportunity.",
-        "why_ranked": msg,
-        "risk_warning": "Risk warning: use ETFs/benchmarks for context rather than headline stock ranks.",
-        "risk_factors": ["not in core equity recommendation universe"],
+        "explanation": "Not modeled as an individual-stock 6–12 month watchlist candidate.",
+        "why_ranked": (
+            f"{sym} is screened out of the equity watchlist universe (benchmark/ETF or non-equity profile). "
+            f"Use for context only — {OUTLOOK_LABEL}."
+        ),
+        "risk_warning": f"Risk note: not an equity watchlist candidate. {RESEARCH_DISCLAIMER}",
+        "risk_factors": ["outside core equity watchlist universe"],
+        "research_disclaimer": RESEARCH_DISCLAIMER,
+        "outlook_horizon": OUTLOOK_LABEL,
+        "score_pillars": _score_pillars_payload(0.0, 2.0, 0.0, 5.0, 3.0, 2.0),
         "breakdown": {
-            "trend_score": 0.0,
-            "momentum_score": 0.0,
-            "news_score": 0.0,
-            "risk_score": 0.0,
-            "consistency_score": 0.0,
-            "company_profile_score": 0.0,
+            "long_term_trend_pts": 0.0,
+            "company_quality_pts": 2.0,
+            "news_narrative_pts": 0.0,
+            "risk_control_pts": 5.0,
+            "momentum_consistency_pts": 3.0,
+            "data_confidence_pts": 2.0,
+            "overall_investor_score": 28,
             "data_points_used": 0,
-            "data_quality_notes": ["non-equity benchmark or blocked name"],
-            "penalties_detail": [],
-            "pre_penalty_score": 22,
-            "score_ceiling_applied": 32,
-            "avg_abs_daily_move_pct": 0.0,
-            "volatility_risk_level": "Unknown",
         },
         "quote": {},
     }
@@ -195,6 +372,7 @@ def build_investor_score(
     profile: dict[str, Any] | None,
     market_context: dict[str, Any] | None = None,
     news_feed_error: bool = False,
+    fundamentals: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     sym = symbol.upper().strip()
     profile = profile or {}
@@ -210,145 +388,83 @@ def build_investor_score(
     news_list = [x for x in (news_items or []) if isinstance(x, dict)]
     has_news = len(news_list) > 0
 
-    trend_s, momentum_s, risk_s, daily_perf, weekly_perf, avg_abs_move = _time_series_metrics(prices)
-    consistency_s = _consistency_score(prices)
-    news_s = _news_sentiment_score(news_list)
-    profile_s = _profile_score(profile)
-
     context = market_context or {}
-    benchmark_weekly = float(context.get("benchmark_weekly_performance") or 0.0)
-    relative_weekly = weekly_perf - benchmark_weekly
-    rel_note = relative_weekly
+    benchmark_total = float(context.get("benchmark_total_return") or 0.0)
+    total_return = _total_return(prices)
+    rel_vs_bench = total_return - benchmark_total
 
-    # Pillar blend (evidence-weighted; profile is a tiny identity check only)
-    pillar_core = (
-        trend_s * 0.24
-        + momentum_s * 0.22
-        + news_s * 0.18
-        + risk_s * 0.14
-        + consistency_s * 0.22
-    )
-    weighted = _clamp(pillar_core + profile_s * 0.04, -2.6, 2.6)
-    pre_penalty = float(_clamp(50.0 + weighted * 11.5, 0.0, 100.0))
-
-    penalties: list[dict[str, Any]] = []
-    penalty_total = 0.0
-
-    def _pen(amount: float, code: str, note: str) -> None:
-        nonlocal penalty_total
-        penalty_total += amount
-        penalties.append({"code": code, "points": round(amount, 2), "note": note})
-
-    if ts_error or n_points < 6:
-        _pen(
-            18.0 + max(0, 6 - n_points) * 0.9,
-            "thin_or_failed_chart",
-            "Chart/price series missing or shorter than minimum depth for conviction scoring.",
-        )
-    elif n_points < 12:
-        _pen(10.0, "short_series", "Price history shorter than preferred window — confidence is capped.")
-
+    trend_pts, trend_note = _long_term_trend_pts(total_return, rel_vs_bench)
+    quality_pts, quality_note = _company_quality_pts(profile, fundamentals)
+    narrative_raw, narrative_notes = _news_narrative_score(news_list)
     if news_feed_error:
-        _pen(16.0, "news_feed_error", "Headline provider returned an error; news pillar is unreliable.")
-    elif not has_news:
-        _pen(11.0, "missing_news", "No recent headlines surfaced — penalized until news coverage exists.")
-
-    avg_move_pct = avg_abs_move * 100.0
-    if avg_move_pct >= 4.8:
-        _pen(13.0, "extreme_realized_vol", "Day-to-day swings are unusually large for conservative ranks.")
-    elif avg_move_pct >= 3.4:
-        _pen(8.0, "high_realized_vol", "Elevated day-to-day noise versus calmer alternatives.")
-
-    if abs(trend_s) < 0.30 and abs(consistency_s) < 0.42:
-        _pen(9.0, "unclear_trend", "Trend and path consistency disagree — structure looks sideways or noisy.")
-
-    ceiling = _score_ceiling_from_depth(n_points)
-
-    interim = float(_clamp(pre_penalty - penalty_total, 0.0, float(ceiling)))
-
-    dq_notes: list[str] = []
-    if n_points < 20:
-        dq_notes.append(f"Only {n_points} usable closes contributed — rank cannot exceed {ceiling}.")
-    if news_feed_error:
-        dq_notes.append("News pillar discounted because the feed signaled an error.")
-
-    rating = "Cautious"
-    tier_line = ""
-    if interim >= 62:
-        rating = "Bullish"
-        tier_line = "Bullish: pillars line up enough for placement near the front of this screen."
-    elif interim >= 42:
-        rating = "Neutral"
-        tier_line = "Neutral: evidence is workable but mixes offsets (data gaps, chop, or mixed signals)."
+        narrative_pts = _clamp(narrative_raw * 12.0, 0.0, 12.0)
     else:
-        tier_line = "Cautious: multiple evidence checks failed or capped the headline score."
+        narrative_pts = _clamp(narrative_raw * 20.0, 0.0, 20.0)
+    risk_pts, risk_note = _risk_control_pts(prices, fundamentals)
+    consistency_pts = _clamp(_consistency_0_1(prices) * 10.0, 0.0, 10.0)
+    data_pts, data_notes = _data_confidence_pts(n_points, ts_error, news_feed_error, has_news)
+
+    total = int(round(_clamp(
+        trend_pts + quality_pts + narrative_pts + risk_pts + consistency_pts + data_pts,
+        0.0,
+        100.0,
+    )))
+
+    rating = _rating_from_score(total)
+    explanation = _rating_explanation(rating, total)
 
     why_parts = [
-        "Why this score (evidence pillars on this window): "
-        + f"trend {trend_s:+.2f}, momentum {momentum_s:+.2f}, headlines {news_s:+.2f}, "
-        + f"risk {risk_s:+.2f} (calmer tapes score higher), consistency {consistency_s:+.2f} "
-        "(how cleanly prices progress through time)."
+        f"{OUTLOOK_LABEL}: {trend_note}",
+        quality_note + ".",
+        "News narrative: " + (narrative_notes[0] if narrative_notes else "neutral") + ".",
     ]
-    if n_points >= 6:
-        why_parts.append(
-            f"Price action uses {n_points} closes; vs SPY benchmark weekly excess was "
-            f"{rel_note * 100:+.2f} percentage points (context only)."
-        )
-    if penalties:
-        why_parts.append(
-            "Applied adjustments: "
-            + "; ".join(f"{p['code']} (−{p['points']} pts)" for p in penalties)
-            + "."
-        )
-    if ceiling < 100:
-        why_parts.append(
-            f"A data-depth cap keeps the headline score at or below {ceiling}/100 while only "
-            f"{n_points} closing prices are available for this interval — not enough bars for a top rank."
-        )
-
+    if data_notes:
+        why_parts.append("Data confidence: " + "; ".join(data_notes[:2]) + ".")
     why_ranked = " ".join(why_parts)
 
     risk_factors: list[str] = []
-    if risk_s < -0.45:
-        risk_factors.append("realized swings are chunky")
-    if not has_news:
-        risk_factors.append("thin headline corroboration")
-    if avg_move_pct >= 2.85:
-        risk_factors.append(f"median daily noise bucket: {_volatility_risk_label(avg_abs_move)}")
-    if abs(trend_s) < 0.35:
-        risk_factors.append("trend slope is tentative")
+    if total_return < -0.05:
+        risk_factors.append("multi-month price trend is negative")
+    if narrative_raw < 0.4:
+        risk_factors.append("headline narrative is weak or cautious")
+    if risk_pts < 8:
+        risk_factors.append("volatility may stress a 6–12 month hold")
+    if data_pts < 5:
+        risk_factors.append("research inputs are incomplete")
     if not risk_factors:
-        risk_factors.append("conditions can deteriorate rapidly — re-check pillars often")
+        risk_factors.append("macro, earnings, and sentiment can shift the long-term setup")
+
+    avg_move = _avg_abs_daily_move(prices)
+    pillars = _score_pillars_payload(
+        trend_pts, quality_pts, narrative_pts, risk_pts, consistency_pts, data_pts
+    )
 
     return {
         "symbol": sym,
-        "score": int(round(interim)),
+        "score": total,
         "rating": rating,
-        "explanation": tier_line,
+        "explanation": explanation,
         "why_ranked": why_ranked,
-        "risk_warning": "Risk warning: " + "; ".join(risk_factors) + ".",
+        "risk_warning": "Risk factors: " + "; ".join(risk_factors) + f". {RESEARCH_DISCLAIMER}",
         "risk_factors": risk_factors,
-        "breakdown": {
-            "trend_score": round(trend_s, 3),
-            "momentum_score": round(momentum_s, 3),
-            "news_score": round(news_s, 3),
-            "risk_score": round(risk_s, 3),
-            "consistency_score": round(consistency_s, 3),
-            "company_profile_score": round(profile_s, 3),
-            "relative_vs_spy_weekly_decimal": round(relative_weekly, 6),
-            "daily_performance": round(daily_perf, 4),
-            "weekly_performance": round(weekly_perf, 4),
-            "benchmark_weekly_performance": round(benchmark_weekly, 4),
-            "avg_abs_daily_move_pct": round(avg_move_pct, 4),
-            "volatility_risk_level": _volatility_risk_label(avg_abs_move),
-            "data_points_used": n_points,
-            "data_quality_notes": dq_notes,
-            "penalties_detail": penalties,
-            "pillar_weighted_blend": round(weighted, 4),
-            "pre_penalty_score": round(pre_penalty, 2),
-            "penalty_total": round(penalty_total, 2),
-            "score_ceiling_applied": ceiling,
-            "overall_investor_score": int(round(interim)),
-        },
+        "research_disclaimer": RESEARCH_DISCLAIMER,
+        "outlook_horizon": OUTLOOK_LABEL,
+        "score_pillars": pillars,
         "quote": quote or {},
+        "breakdown": {
+            "long_term_trend_pts": round(trend_pts, 1),
+            "company_quality_pts": round(quality_pts, 1),
+            "news_narrative_pts": round(narrative_pts, 1),
+            "risk_control_pts": round(risk_pts, 1),
+            "momentum_consistency_pts": round(consistency_pts, 1),
+            "data_confidence_pts": round(data_pts, 1),
+            "overall_investor_score": total,
+            "period_total_return_pct": round(total_return * 100.0, 2),
+            "relative_vs_spy_return_pct": round(rel_vs_bench * 100.0, 2),
+            "data_points_used": n_points,
+            "avg_abs_daily_move_pct": round(avg_move * 100.0, 3),
+            "volatility_risk_level": _volatility_risk_label(avg_move),
+            "narrative_notes": narrative_notes,
+            "trend_note": trend_note,
+        },
     }

@@ -112,7 +112,7 @@ def _market_channel(market_prov: Any) -> dict[str, Any]:
             "role": "price_quotes_profiles",
             "provider_id": name,
             "status": "live",
-            "detail": "Finnhub API (quotes, candles, profile). Optional TWELVE_DATA_API_KEY retries candles if Finnhub has no data.",
+            "detail": "Finnhub API (quotes, profile). Optional TWELVE_DATA_API_KEY retries closing-price charts if Finnhub has no data.",
         }
     if name == "demo_market":
         return {
@@ -138,7 +138,7 @@ def _chart_channel(market_prov: Any) -> dict[str, Any]:
         base = {
             **base,
             "role": "price_charts_timeseries",
-            "detail": base.get("detail") or "Finnhub candles with optional Twelve Data fallback",
+            "detail": base.get("detail") or "Finnhub closing prices with optional Twelve Data fallback",
         }
     else:
         base = {**base, "role": "price_charts_timeseries"}

@@ -89,6 +89,17 @@ _INDEX_ETF_TICKER_DENYLIST: frozenset[str] = frozenset(
 )
 
 
+def _is_non_equity_asset_type(asset_type: str) -> bool:
+    at = (asset_type or "").strip().upper()
+    if not at:
+        return False
+    if at in {"ETF", "ETN", "FUND", "MUTUAL FUND", "INDEX FUND", "TRUST FUND"}:
+        return True
+    if "ETF" in at or " ETN" in at or "INDEX FUND" in at or "MUTUAL FUND" in at:
+        return True
+    return False
+
+
 def is_eligible_stock_opportunity(symbol: str, profile: dict | None) -> bool:
     """
     Top recommendations are for individual operating companies only (not ETFs/index funds).
@@ -100,8 +111,8 @@ def is_eligible_stock_opportunity(symbol: str, profile: dict | None) -> bool:
     if sym in _INDEX_ETF_TICKER_DENYLIST:
         return False
     p = profile or {}
-    at = str(p.get("asset_type") or "").strip().upper()
-    if at and at != "EQUITY":
+    at = str(p.get("asset_type") or "").strip()
+    if _is_non_equity_asset_type(at):
         return False
     nm = str(p.get("company_name") or "").upper()
     if " ETF" in nm or nm.endswith(" ETF") or " ETN" in nm or "INDEX FUND" in nm:

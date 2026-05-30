@@ -1,7 +1,8 @@
 """
 Investor market data provider layer (search / quote / time-series / profile).
 
-- Real quotes/charts/profiles via Twelve Data or Finnhub (provider-selectable).
+- Real quotes / closing-price history / profiles via Finnhub or Twelve Data (provider-selectable).
+- Finnhub chart history falls back to Twelve Data when configured (Finnhub free tier may block OHLC endpoints).
 - Optional deterministic demo prices: RAGX_INVESTOR_MARKET_DEMO=1 (synthetic series only in demo).
 - Without a key (and demo off): explicit errors — no fabricated OHLC in live mode.
 """
@@ -98,7 +99,7 @@ def _twelve_data_time_series(api_key: str, symbol: str, interval_rng: str) -> di
             "resolution": td_interval,
             "provider": "twelve_data_chart",
             "error": True,
-            "message": "Twelve Data HTTP error while loading candles.",
+            "message": "Twelve Data HTTP error while loading closing prices.",
             "demo_mode": False,
             "debug_detail": (raw_body or "")[:900],
             "data_source": "twelve_data",
@@ -233,6 +234,16 @@ class MarketDataProvider(ABC):
         """Optional enrichment (market cap, sector, ranges) — default none."""
         return {}
 
+    def get_insider_activity(self, symbol: str) -> dict[str, Any]:
+        """SEC Form 4 insider transactions — Finnhub only; default empty."""
+        from backend.investor_insider import empty_insider_payload
+
+        return empty_insider_payload(
+            symbol,
+            self.name,
+            reason="insider_requires_finnhub",
+        )
+
 
 class DemoMarketDataProvider(MarketDataProvider):
     """Synthetic OHLC-like series — only when RAGX_INVESTOR_MARKET_DEMO is enabled."""
@@ -338,7 +349,7 @@ class MissingApiKeyMarketDataProvider(MarketDataProvider):
             "error": True,
             "message": MSG_MARKET_KEY_MISSING,
             "demo_mode": False,
-            "debug_detail": "Configure TWELVE_DATA_API_KEY or FINNHUB_API_KEY, or set RAGX_INVESTOR_MARKET_DEMO=1 for synthetic demo candles only.",
+            "debug_detail": "Configure TWELVE_DATA_API_KEY or FINNHUB_API_KEY, or set RAGX_INVESTOR_MARKET_DEMO=1 for synthetic demo closing prices only.",
         }
 
     def get_company_profile(self, symbol: str) -> dict[str, Any]:
@@ -701,6 +712,8 @@ class FinnhubMarketDataProvider(MarketDataProvider):
                     if isinstance(data, dict):
                         fb = str(data.get("error") or "")
                     tail = fb or (raw_body or "")[:560]
+                    if status in (401, 403) and resolve != resolve_attempts[-1]:
+                        continue
                     return {
                         "symbol": sym,
                         "interval": rng,
@@ -708,7 +721,7 @@ class FinnhubMarketDataProvider(MarketDataProvider):
                         "resolution": resolve,
                         "provider": self.name,
                         "error": True,
-                        "message": f"Finnhub candles HTTP {status}",
+                        "message": f"Finnhub historical closes unavailable (HTTP {status}).",
                         "demo_mode": False,
                         "debug_detail": tail,
                         "data_source": "finnhub",
@@ -721,7 +734,7 @@ class FinnhubMarketDataProvider(MarketDataProvider):
                         "resolution": resolve,
                         "provider": self.name,
                         "error": True,
-                        "message": "Finnhub returned an unreadable candle payload.",
+                        "message": "Finnhub returned an unreadable historical price payload.",
                         "demo_mode": False,
                         "debug_detail": (raw_body or "")[:560] if raw_body else None,
                         "data_source": "finnhub",
@@ -747,7 +760,9 @@ class FinnhubMarketDataProvider(MarketDataProvider):
                 if st == "no_data" and resolve == "60" and rng in ("1D", "5D"):
                     continue
                 msg = (
-                    "No OHLC returned for this symbol/interval." if st == "no_data" else "Finnhub returned unexpected candle status."
+                    "No closing prices returned for this symbol/interval."
+                    if st == "no_data"
+                    else "Finnhub returned unexpected historical price status."
                 )
                 return {
                     "symbol": sym,
@@ -791,7 +806,7 @@ class FinnhubMarketDataProvider(MarketDataProvider):
                 "points": [],
                 "provider": self.name,
                 "error": True,
-                "message": "Market data request failed parsing Finnhub candles.",
+                "message": "Market data request failed parsing Finnhub closing prices.",
                 "demo_mode": False,
                 "debug_detail": detail,
                 "data_source": "finnhub",
@@ -807,13 +822,16 @@ class FinnhubMarketDataProvider(MarketDataProvider):
             if "data_source" not in fh:
                 fh["data_source"] = "finnhub"
             return fh
-        td_key = self.twelve_data_api_key
+        td_key = (self.twelve_data_api_key or os.getenv("TWELVE_DATA_API_KEY", "").strip()) or None
         if td_key:
             td = _twelve_data_time_series(td_key, sym, rng)
             if not td.get("error") and len(td.get("points") or []) >= 2:
                 note = fh.get("message") or ""
                 fh_detail = fh.get("debug_detail") or ""
-                combo = "; ".join(x for x in (note, f"fallback used (Finnhub: {fh_detail[:200]})") if x)
+                combo = "; ".join(x for x in (note, f"Finnhub fallback note: {fh_detail[:200]}") if x)
+                td["provider"] = self.name
+                td["data_source"] = "twelve_data"
+                td["message"] = None
                 td["upstream_note"] = combo[:900] if combo else None
                 return td
             if td.get("error"):
@@ -823,11 +841,22 @@ class FinnhubMarketDataProvider(MarketDataProvider):
                 fh_msg = str(fh.get("message") or "").strip()
                 td_msg = str(td.get("message") or "").strip()
                 joined = [m for m in (fh_msg, td_msg and f"Twelve Data: {td_msg}") if m]
-                fh["message"] = " · ".join(joined) if joined else "Chart unavailable (Finnhub and Twelve Data both failed)."
+                fh["message"] = (
+                    " · ".join(joined)
+                    if joined
+                    else "Closing-price history unavailable (Finnhub and Twelve Data both failed)."
+                )
             fh["fallback_attempted"] = "twelve_data"
+        elif fh.get("error"):
+            detail = str(fh.get("debug_detail") or fh.get("message") or "")
+            if "403" in detail or "403" in str(fh.get("message") or ""):
+                fh["message"] = (
+                    "Finnhub closing-price history is not on your plan. "
+                    "Add TWELVE_DATA_API_KEY for automatic chart fallback."
+                )
         fh["demo_mode"] = False
         if "message" not in fh or fh.get("message") is None:
-            fh["message"] = "Chart unavailable for this symbol/range."
+            fh["message"] = "Closing-price history unavailable for this symbol/range."
         return fh
 
     def get_company_profile(self, symbol: str) -> dict[str, Any]:
@@ -946,6 +975,22 @@ class FinnhubMarketDataProvider(MarketDataProvider):
 
         return out
 
+    def get_insider_activity(self, symbol: str) -> dict[str, Any]:
+        sym = symbol.upper().strip()
+        end = datetime.now(UTC).date()
+        start = end - timedelta(days=365)
+        raw = self._finnhub_json(
+            "stock/insider-transactions",
+            {
+                "symbol": sym,
+                "from": start.isoformat(),
+                "to": end.isoformat(),
+            },
+        )
+        from backend.investor_insider import build_insider_activity_payload
+
+        return build_insider_activity_payload(sym, self.name, raw, finnhub_available=True)
+
 
 def create_market_data_provider() -> MarketDataProvider:
     demo = os.getenv("RAGX_INVESTOR_MARKET_DEMO", "").strip().lower() in ("1", "true", "yes")
@@ -969,13 +1014,16 @@ def create_market_data_provider() -> MarketDataProvider:
     elif mode not in ("", "auto"):
         logger.warning("Unknown RAGX_INVESTOR_MARKET_PROVIDER=%r. Falling back to auto provider selection.", mode)
 
-    # Auto mode prefers Twelve Data first to avoid Finnhub dependency.
-    if twelve:
-        logger.info("Investor market provider: twelve_data_market (auto)")
-        return TwelveDataMarketDataProvider(twelve)
+    # Auto: Finnhub when available (quotes, profile, fundamentals); Twelve optional for closing-price charts.
     if hub:
-        logger.info("Investor market provider: finnhub_market (auto)")
-        return FinnhubMarketDataProvider(hub, twelve_data_api_key=None)
+        logger.info(
+            "Investor market provider: finnhub_market (auto%s)",
+            ", twelve closing-price fallback" if twelve else "",
+        )
+        return FinnhubMarketDataProvider(hub, twelve_data_api_key=twelve or None)
+    if twelve:
+        logger.info("Investor market provider: twelve_data_market (auto, finnhub unavailable)")
+        return TwelveDataMarketDataProvider(twelve)
 
     legacy = os.getenv("RAGX_MARKET_DATA_PROVIDER", "").strip().lower()
     if legacy and legacy != "mock":

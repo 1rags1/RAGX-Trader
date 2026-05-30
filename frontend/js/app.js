@@ -34,6 +34,28 @@
   let chartApi = null;
   let heartbeatId = null;
   let previousConfigSymbol = null;
+  let sessionExpired = false;
+
+  const ui = {
+    chartOverlay: document.getElementById("chart-loading-overlay"),
+    chartOverlayText: document.getElementById("chart-loading-text"),
+    sessionExpiredBanner: document.getElementById("session-expired-banner"),
+  };
+
+  function setChartLoading(loading, text) {
+    if (!ui.chartOverlay) return;
+    ui.chartOverlay.hidden = !loading;
+    if (ui.chartOverlayText && text) ui.chartOverlayText.textContent = text;
+  }
+
+  function showSessionExpired() {
+    sessionExpired = true;
+    if (ui.sessionExpiredBanner) ui.sessionExpiredBanner.hidden = false;
+    setChartLoading(true, "Session expired. Redirecting to access gate…");
+    window.setTimeout(() => {
+      window.location.href = "/gate";
+    }, 1200);
+  }
 
   function setBackendStatus(connected) {
     els.dotBackend.dataset.state = connected ? "on" : "off";
@@ -202,12 +224,15 @@
       if (Array.isArray(bars)) {
         RagxChartUpdater.replaceBars(chartApi, j.interval || iv, bars);
         RagxLivePrice.resetFromBars(bars);
+        setChartLoading(false);
         if (window.RagxMarketDiagnostics && typeof window.RagxMarketDiagnostics.onBarsLoaded === "function") {
           window.RagxMarketDiagnostics.onBarsLoaded(bars);
         }
+      } else {
+        setChartLoading(true, "No chart data yet. Waiting for feed…");
       }
     } catch {
-      /* live stream only */
+      setChartLoading(true, "Waiting for live feed…");
     }
   }
 
@@ -317,6 +342,7 @@
     ws = new WebSocket(wsUrl());
 
     ws.onopen = () => {
+      if (sessionExpired) return;
       setBackendStatus(true);
       if (heartbeatId) window.clearInterval(heartbeatId);
       heartbeatId = window.setInterval(() => {
@@ -332,6 +358,11 @@
       heartbeatId = null;
       setBackendStatus(false);
       setBinanceStatus(false);
+      if (ws && ws.code === 4401) {
+        showSessionExpired();
+        return;
+      }
+      setChartLoading(true, "Reconnecting to market stream…");
       window.setTimeout(connect, 2000);
     };
 
@@ -343,6 +374,7 @@
   }
 
   async function boot() {
+    setChartLoading(true, "Loading chart engine…");
     if (window.RagxLayoutResizer && typeof window.RagxLayoutResizer.init === "function") {
       window.RagxLayoutResizer.init({ root: document.querySelector("main.main") });
     }
@@ -379,6 +411,7 @@
         els.subtitleFeed.textContent =
           "Chart library failed to load (check internet/CSP for unpkg). Investor tab still works.";
       }
+      setChartLoading(true, "Chart failed to load.");
       return;
     }
 

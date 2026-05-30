@@ -500,7 +500,12 @@
               class="chart-container"
               role="img"
               aria-label="Price chart"
-            ></div>
+            >
+              <div id="chart-loading-overlay" class="chart-loading-overlay" aria-live="polite">
+                <div class="chart-loading-spinner" aria-hidden="true"></div>
+                <p id="chart-loading-text" class="chart-loading-text">Loading chart data…</p>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -627,7 +632,7 @@
       <header class="investor-header">
         <h2>Investor Dashboard</h2>
         <p id="investor-dash-subtitle" class="investor-subtitle">
-          Long-term research workspace · data mode loads from the server.
+          6–12 month research workspace · watchlist rankings, not short-term trade signals.
         </p>
         <div
           id="investor-mode-banner"
@@ -642,26 +647,27 @@
         </details>
       </header>
 
-      <section class="investor-section" aria-labelledby="investor-market-overview-title">
+      <section class="investor-section" aria-labelledby="investor-watchlist-title">
         <div class="investor-section-head">
-          <h3 id="investor-market-overview-title">Market Overview</h3>
+          <h3 id="investor-watchlist-title">My Watchlist</h3>
+          <p class="investor-section-sub">6–12 month research list · saved locally in your browser</p>
         </div>
-        <div class="investor-overview-grid">
-          <article class="investor-card investor-kpi-card">
-            <p class="investor-kpi-label">Market regime</p>
-            <p id="investor-kpi-regime" class="investor-kpi-value">Loading data mode…</p>
-          </article>
-          <article class="investor-card investor-kpi-card">
-            <p class="investor-kpi-label">Benchmark context</p>
-            <p class="investor-kpi-value">
-              S&amp;P 500 vs Nasdaq proxies: SPY · QQQ (overview — not Top 3 stock picks).
-            </p>
-          </article>
-          <article class="investor-card investor-kpi-card">
-            <p class="investor-kpi-label">Macro tone</p>
-            <p id="investor-kpi-macro" class="investor-kpi-value">Loading data mode…</p>
-          </article>
+        <div
+          id="investor-watchlist-empty"
+          class="investor-watchlist-empty"
+          role="status"
+        >
+          <p class="investor-watchlist-empty-title">Your watchlist is empty</p>
+          <p class="investor-watchlist-empty-copy">
+            Search a stock to start building your investor watchlist.
+          </p>
         </div>
+        <div
+          id="investor-watchlist-grid"
+          class="investor-watchlist-grid"
+          role="list"
+          hidden
+        ></div>
       </section>
 
       <section class="investor-section" aria-labelledby="investor-search-title">
@@ -681,15 +687,31 @@
             <button type="button" class="investor-search-btn" id="investor-search-btn">Search</button>
           </div>
           <p id="investor-search-status" class="investor-search-status" hidden></p>
+          <div
+            id="investor-search-watchlist-bar"
+            class="investor-search-watchlist-bar"
+            hidden
+          >
+            <span id="investor-search-selected-label" class="investor-search-selected-label"></span>
+            <button
+              type="button"
+              id="investor-add-watchlist-btn"
+              class="investor-add-watchlist-btn"
+            >
+              Add to Watchlist
+            </button>
+          </div>
           <div id="investor-search-results" class="investor-search-results" role="list"></div>
         </div>
       </section>
 
       <section class="investor-section" aria-labelledby="investor-opportunities-title">
         <div class="investor-section-head">
-          <h3 id="investor-opportunities-title">Top 3 Stock Opportunities</h3>
+          <h3 id="investor-opportunities-title">Watchlist candidates</h3>
         </div>
-        <p id="investor-opps-status" class="investor-panel-line">Scanning stock universe for top opportunities...</p>
+        <p id="investor-opps-status" class="investor-panel-line">
+          Ranking screened stocks for a 6–12 month outlook… This is research support, not financial advice.
+        </p>
         <div id="investor-opps-list" class="investor-top3-list" role="list">
         </div>
       </section>
@@ -701,13 +723,40 @@
           <p class="investor-panel-line">Company: <span id="investor-selected-company">—</span></p>
           <p class="investor-panel-line">Exchange: <span id="investor-selected-exchange">—</span></p>
           <p class="investor-panel-line">Asset type: <span id="investor-selected-asset-type">—</span></p>
-          <p class="investor-panel-line">Investor score: <span id="investor-selected-score">—</span></p>
-          <p class="investor-panel-line">Rating: <span id="investor-selected-rating">—</span></p>
-          <p class="investor-panel-line">Score breakdown: <span id="investor-selected-breakdown">—</span></p>
-          <p class="investor-panel-line">
-            Why this ranked here: <span id="investor-selected-explanation">—</span>
-          </p>
-          <p class="investor-panel-line">Risk warning: <span id="investor-selected-risk">—</span></p>
+
+          <section class="investor-score-panel" aria-labelledby="investor-outlook-heading">
+            <div class="investor-score-panel-head">
+              <h4 id="investor-outlook-heading" class="investor-section-divider">6–12 Month Outlook</h4>
+              <p class="investor-score-disclaimer">This is research support, not financial advice.</p>
+            </div>
+            <div class="investor-score-summary-row">
+              <div class="investor-score-summary-main">
+                <span class="investor-score-summary-label">Research score</span>
+                <span id="investor-selected-score" class="investor-score-summary-value">—</span>
+              </div>
+              <span
+                id="investor-selected-rating"
+                class="investor-rating-badge investor-rating-badge--neutral"
+                role="status"
+                >—</span
+              >
+            </div>
+            <div
+              id="investor-selected-breakdown"
+              class="investor-pillar-breakdown"
+              role="list"
+              aria-label="Score pillar breakdown"
+            ></div>
+            <p class="investor-panel-line investor-outlook-line">
+              <span class="investor-field-label">Why this ranks here</span>
+              <span id="investor-selected-explanation">Select a stock to load the 6–12 month research view.</span>
+            </p>
+            <p class="investor-panel-line investor-risk-line">
+              <span class="investor-field-label">Risk factors</span>
+              <span id="investor-selected-risk">—</span>
+            </p>
+          </section>
+
           <div class="investor-chart-section">
             <div class="investor-chart-toolbar" role="group" aria-label="Selected stock chart range">
               <button type="button" class="investor-range-btn investor-range-btn--active" data-range="1D">1D</button>
@@ -734,7 +783,7 @@
               class="investor-chart-wrap"
               id="investor-chart-wrap"
               role="img"
-              aria-label="Closing price line chart — not candles"
+              aria-label="Closing price line chart"
             >
               <svg
                 id="investor-selected-chart"
@@ -749,6 +798,12 @@
                   </clipPath>
                 </defs>
                 <g id="investor-chart-grid" aria-hidden="true"></g>
+                <path
+                  id="investor-selected-chart-area"
+                  clip-path="url(#investor-chart-clip)"
+                  class="investor-selected-chart-area investor-selected-chart-area--neutral"
+                  d=""
+                ></path>
                 <polyline
                   id="investor-selected-chart-line"
                   clip-path="url(#investor-chart-clip)"
@@ -756,30 +811,99 @@
                   points=""
                   fill="none"
                 ></polyline>
+                <g id="investor-chart-hover-layer" clip-path="url(#investor-chart-clip)" aria-hidden="true">
+                  <line
+                    id="investor-chart-crosshair-v"
+                    class="investor-chart-crosshair"
+                    x1="0"
+                    y1="14"
+                    x2="0"
+                    y2="234"
+                    visibility="hidden"
+                  ></line>
+                  <circle
+                    id="investor-chart-hover-dot"
+                    class="investor-chart-hover-dot"
+                    r="4.5"
+                    cx="0"
+                    cy="0"
+                    visibility="hidden"
+                  ></circle>
+                </g>
                 <g id="investor-chart-y-labels" class="investor-chart-axis-labels"></g>
                 <g id="investor-chart-x-labels" class="investor-chart-axis-labels"></g>
               </svg>
+              <div id="investor-chart-tooltip" class="investor-chart-tooltip" hidden>
+                <span id="investor-chart-tooltip-price" class="investor-chart-tooltip-price">—</span>
+                <span id="investor-chart-tooltip-date" class="investor-chart-tooltip-date">—</span>
+              </div>
               <div id="investor-chart-empty" class="investor-chart-empty">Select a stock to load closing prices.</div>
               <pre id="investor-chart-debug-detail" class="investor-chart-debug-detail" hidden></pre>
             </div>
           </div>
         </article>
-        <article class="investor-card" aria-labelledby="news-reasoning-title">
+        <article class="investor-card investor-reasoning-panel" aria-labelledby="news-reasoning-title">
           <h3 id="news-reasoning-title">News + Reasoning Panel</h3>
-          <p id="investor-news-status" class="investor-panel-line">Select a stock to load recent company news.</p>
-          <div id="investor-news-list" class="investor-news-list" role="list"></div>
-          <div class="investor-summary-wrap">
-            <p class="investor-summary-title">AI-style research summary (rule-based)</p>
-            <p class="investor-panel-line"><strong>What is happening:</strong> <span id="investor-summary-happening">—</span></p>
-            <p class="investor-panel-line"><strong>Why it matters:</strong> <span id="investor-summary-why">—</span></p>
-            <p class="investor-panel-line"><strong>What could help:</strong> <span id="investor-summary-help">—</span></p>
-            <p class="investor-panel-line"><strong>What could hurt:</strong> <span id="investor-summary-hurt">—</span></p>
-            <p class="investor-panel-line"><strong>Overall conclusion:</strong> <span id="investor-summary-conclusion">—</span></p>
-            <div>
-              <p class="investor-summary-title investor-summary-title--sources">Sources</p>
-              <div id="investor-summary-sources" class="investor-summary-sources" role="list"></div>
+
+          <section class="investor-thesis" aria-labelledby="investor-thesis-heading">
+            <h4 id="investor-thesis-heading" class="investor-section-divider">6–12 Month Outlook · Investment Thesis</h4>
+
+            <div class="investor-thesis-rating-row">
+              <span class="investor-thesis-rating-label">Research rating</span>
+              <span
+                id="investor-thesis-badge"
+                class="investor-rating-badge investor-rating-badge--neutral"
+                role="status"
+                >—</span
+              >
             </div>
-          </div>
+
+            <div class="investor-thesis-block">
+              <p class="investor-thesis-block-label">Why This Ranks Here (6–12 Month Outlook)</p>
+              <p id="investor-thesis-why" class="investor-thesis-copy">Select a stock to load the investment thesis.</p>
+            </div>
+
+            <div class="investor-thesis-dual">
+              <div class="investor-thesis-block investor-thesis-block--compact">
+                <p class="investor-thesis-block-label">Key Strengths</p>
+                <ul id="investor-thesis-strengths" class="investor-thesis-list"></ul>
+              </div>
+              <div class="investor-thesis-block investor-thesis-block--compact">
+                <p class="investor-thesis-block-label investor-thesis-block-label--risk">Key Risks</p>
+                <ul id="investor-thesis-risks" class="investor-thesis-list investor-thesis-list--risk"></ul>
+              </div>
+            </div>
+
+            <div class="investor-thesis-block investor-thesis-block--summary">
+              <p class="investor-thesis-block-label">Short Summary</p>
+              <p id="investor-thesis-summary" class="investor-thesis-summary">—</p>
+              <p class="investor-thesis-disclaimer">This is research support, not financial advice.</p>
+            </div>
+          </section>
+
+          <section class="investor-insider-section" aria-labelledby="investor-insider-heading">
+            <h4 id="investor-insider-heading" class="investor-section-divider">Insider Activity</h4>
+            <p
+              id="investor-insider-summary"
+              class="investor-insider-summary investor-insider-summary--neutral"
+              role="status"
+            >
+              Select a stock to review recent SEC Form 4 filings.
+            </p>
+            <div id="investor-insider-list" class="investor-insider-list" role="list"></div>
+            <p class="investor-insider-edu">
+              Insider activity is only one signal and should not be used alone.
+            </p>
+          </section>
+
+          <section class="investor-supporting-news" aria-labelledby="investor-news-heading">
+            <h4 id="investor-news-heading" class="investor-section-divider">Supporting News</h4>
+            <p id="investor-news-status" class="investor-panel-line investor-news-status-line">
+              Headlines load after you select a stock.
+            </p>
+            <p class="investor-news-subhead">Recent Headlines</p>
+            <div id="investor-news-list" class="investor-news-list" role="list"></div>
+          </section>
         </article>
       </section>
     </section>
@@ -823,6 +947,10 @@
         <p id="trade-plan-summary" class="trade-plan-summary"></p>
         <p id="trade-plan-detail" class="trade-plan-detail-body"></p>
       </div>
+    </div>
+    <div id="session-expired-banner" class="session-expired-banner" role="alert" hidden>
+      <span>Session expired. Re-authenticating…</span>
+      <a href="/gate" class="session-expired-link">Open access gate</a>
     </div>
   </body>
 </html>

@@ -1,6 +1,6 @@
 /**
  * Investor dashboard interactions (search + selected stock panel).
- * Live data: FINNHUB_API_KEY (quotes, profile, Finnhub candles) + optional TWELVE_DATA_API_KEY (candle fallback).
+ * Live data: FINNHUB_API_KEY (quotes, profile, news) + optional TWELVE_DATA_API_KEY (closing-price chart fallback).
  */
 (function () {
   "use strict";
@@ -37,6 +37,117 @@
     return pct > 0 ? "up" : "down";
   }
 
+  const INVESTOR_OUTLOOK_TITLE = "6–12 Month Outlook";
+  const INVESTOR_RESEARCH_DISCLAIMER = "This is research support, not financial advice.";
+
+  const INVESTOR_SCORE_PILLARS = [
+    { key: "long_term_trend_pts", label: "Long-term trend", max: 25 },
+    { key: "company_quality_pts", label: "Company quality", max: 20 },
+    { key: "news_narrative_pts", label: "News sentiment", max: 20 },
+    { key: "risk_control_pts", label: "Risk", max: 15 },
+    { key: "momentum_consistency_pts", label: "Consistency", max: 10 },
+    { key: "data_confidence_pts", label: "Data confidence", max: 10 },
+  ];
+
+  function normalizeInvestorRating(rating) {
+    const r = String(rating || "").trim();
+    const rl = r.toLowerCase();
+    if (rl.includes("strong") && rl.includes("watch")) return "Strong Watch";
+    if (rl.includes("high risk") || (rl.includes("avoid") && rl.includes("risk"))) return "High Risk";
+    if (rl.includes("watch")) return "Watch";
+    if (rl.includes("cautious")) return "Cautious";
+    if (rl.includes("neutral")) return "Neutral";
+    if (rl.includes("bull")) return "Strong Watch";
+    if (rl.includes("bear")) return "High Risk";
+    return r || "Neutral";
+  }
+
+  function investorRatingVariant(rating) {
+    const label = normalizeInvestorRating(rating);
+    const rl = label.toLowerCase();
+    if (rl.includes("strong") && rl.includes("watch")) return "strong_watch";
+    if (rl.includes("high risk")) return "high_risk";
+    if (rl.includes("watch")) return "watch";
+    if (rl.includes("cautious")) return "cautious";
+    if (rl.includes("neutral")) return "neutral";
+    return "neutral";
+  }
+
+  function applyInvestorRatingBadge(el, rating) {
+    if (!el) return;
+    const label = normalizeInvestorRating(rating);
+    const variant = investorRatingVariant(rating);
+    el.textContent = label;
+    el.className = `investor-rating-badge investor-rating-badge--${variant}`;
+  }
+
+  function formatPillarPoints(raw, maxPts) {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return "—";
+    return `${n.toFixed(n % 1 === 0 ? 0 : 1)}/${maxPts}`;
+  }
+
+  function renderInvestorPillarBreakdown(container, breakdown, pillarsFromApi) {
+    if (!container) return;
+    container.innerHTML = "";
+    const rows = Array.isArray(pillarsFromApi) && pillarsFromApi.length ? pillarsFromApi : null;
+    if (rows) {
+      rows.forEach((p) => {
+        if (!p || typeof p !== "object") return;
+        const row = document.createElement("div");
+        row.className = "investor-pillar-row";
+        row.setAttribute("role", "listitem");
+        const lab = document.createElement("span");
+        lab.className = "investor-pillar-label";
+        lab.textContent = String(p.label || "—");
+        const val = document.createElement("span");
+        val.className = "investor-pillar-val";
+        val.textContent = formatPillarPoints(p.points, p.max_points);
+        row.appendChild(lab);
+        row.appendChild(val);
+        container.appendChild(row);
+      });
+      return;
+    }
+    const b = breakdown || {};
+    INVESTOR_SCORE_PILLARS.forEach((p) => {
+      const row = document.createElement("div");
+      row.className = "investor-pillar-row";
+      row.setAttribute("role", "listitem");
+      const lab = document.createElement("span");
+      lab.className = "investor-pillar-label";
+      lab.textContent = p.label;
+      const val = document.createElement("span");
+      val.className = "investor-pillar-val";
+      val.textContent = formatPillarPoints(b[p.key], p.max);
+      row.appendChild(lab);
+      row.appendChild(val);
+      container.appendChild(row);
+    });
+  }
+
+  function thesisRatingMeta(rating) {
+    const label = normalizeInvestorRating(rating);
+    return { label, variant: investorRatingVariant(rating) };
+  }
+
+  function renderThesisBulletList(listEl, items, emptyLabel) {
+    if (!listEl) return;
+    listEl.innerHTML = "";
+    const rows = Array.isArray(items) ? items.filter((x) => typeof x === "string" && x.trim()) : [];
+    if (!rows.length) {
+      const li = document.createElement("li");
+      li.textContent = emptyLabel || "—";
+      listEl.appendChild(li);
+      return;
+    }
+    rows.slice(0, 3).forEach((line) => {
+      const li = document.createElement("li");
+      li.textContent = line.trim();
+      listEl.appendChild(li);
+    });
+  }
+
   function formatSignedPeriodPct(pct) {
     if (pct === null || !Number.isFinite(pct)) return "—";
     const sign = pct > 0 ? "+" : "";
@@ -44,8 +155,27 @@
   }
 
   const SVG_NS = "http://www.w3.org/2000/svg";
+  const INVESTOR_CHART_W = 640;
+  const INVESTOR_CHART_H = 248;
 
-  /** Plain closing price · line chart — not OHLC candles */
+  function friendlyInvestorChartError(raw) {
+    const m = String(raw || "").trim();
+    if (!m) return "Closing-price history is unavailable right now.";
+    if (/finnhub.*403|candles http 403|don't have access to this resource|historical closes unavailable/i.test(m)) {
+      return "Finnhub closing prices are not on your plan. Add TWELVE_DATA_API_KEY for automatic chart fallback.";
+    }
+    return m;
+  }
+
+  /** Reject null/undefined/blank before Number() — Number(null) is 0. */
+  function investorPresentNumber(v) {
+    if (v === null || v === undefined) return null;
+    if (typeof v === "string" && !v.trim()) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  /** Plain closing price line chart (historical closes only). */
   function formatUsdPriceInvestor(n) {
     if (!Number.isFinite(n)) return "—";
     const frac = Math.abs(n) >= 250 ? 2 : Math.abs(n) >= 25 ? 2 : 4;
@@ -79,7 +209,65 @@
     el.classList.add(`investor-chart-delta--${v}`);
   }
 
-  function buildSparkPolylineAttr(vals, width, height, padX, padY) {
+  const WATCHLIST_STORAGE_KEY = "ragx_investor_watchlist";
+  const WATCHLIST_MAX_ITEMS = 20;
+
+  function loadWatchlistItems() {
+    try {
+      if (typeof localStorage === "undefined") return [];
+      const raw = localStorage.getItem(WATCHLIST_STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      const items = Array.isArray(parsed?.items) ? parsed.items : Array.isArray(parsed) ? parsed : [];
+      return items
+        .filter((x) => x && typeof x.ticker === "string" && x.ticker.trim())
+        .map((x) => ({
+          ticker: String(x.ticker).trim().toUpperCase(),
+          company_name: typeof x.company_name === "string" ? x.company_name.trim() : "",
+          added_at: typeof x.added_at === "string" ? x.added_at : new Date().toISOString(),
+        }))
+        .slice(0, WATCHLIST_MAX_ITEMS);
+    } catch {
+      return [];
+    }
+  }
+
+  function saveWatchlistItems(items) {
+    try {
+      if (typeof localStorage === "undefined") return;
+      localStorage.setItem(
+        WATCHLIST_STORAGE_KEY,
+        JSON.stringify({ version: 1, items: items.slice(0, WATCHLIST_MAX_ITEMS) })
+      );
+    } catch {
+      /* ignore quota / private mode */
+    }
+  }
+
+  function truncateOutlook(text, maxLen) {
+    const t = String(text || "").trim();
+    if (!t) return `${INVESTOR_OUTLOOK_TITLE} — research summary loading…`;
+    if (t.length <= maxLen) return t;
+    return `${t.slice(0, maxLen - 1).trim()}…`;
+  }
+
+  function watchlistRatingVariant(rating) {
+    return investorRatingVariant(rating);
+  }
+
+  function formatInvestorSignedPct(pct) {
+    const n = investorPresentNumber(pct);
+    if (n === null) return "—";
+    const sign = n >= 0 ? "+" : "−";
+    return `${sign}${Math.abs(n).toFixed(2)}%`;
+  }
+
+  function deltaToneClass(pct) {
+    const n = investorPresentNumber(pct);
+    if (n === null) return "muted";
+    if (Math.abs(n) < 0.02) return "muted";
+    return n >= 0 ? "up" : "down";
+  }
     if (vals.length < 2) return "";
     const min = Math.min(...vals);
     const max = Math.max(...vals);
@@ -106,8 +294,6 @@
   function applyInvestorDiagnostics(j) {
     const banner = document.getElementById("investor-mode-banner");
     const sub = document.getElementById("investor-dash-subtitle");
-    const regime = document.getElementById("investor-kpi-regime");
-    const macro = document.getElementById("investor-kpi-macro");
     const panel = document.getElementById("investor-diagnostics-panel");
     if (!banner || !panel) return;
 
@@ -119,19 +305,7 @@
     if (sub) {
       sub.textContent = j?.fully_live
         ? "Live investor feeds are connected — scores, charts, and news use configured APIs."
-        : "Demo mode or missing keys — add FINNHUB_API_KEY (+ optional TWELVE_DATA_API_KEY as candle fallback) and a news key for live mode.";
-    }
-
-    if (regime) {
-      regime.textContent = j?.fully_live
-        ? "Regime is not auto-labeled here — use Trader price action and your own process."
-        : "Regime readouts stay off while market or news APIs are not fully live.";
-    }
-
-    if (macro) {
-      macro.textContent = j?.fully_live
-        ? "Macro is not auto-summarized — pair company news with your macro research stack."
-        : "Macro overlays wait for full API coverage; news headline cards show feed status.";
+        : "Demo mode or missing keys — add FINNHUB_API_KEY (+ optional TWELVE_DATA_API_KEY as chart fallback) and a news key for live mode.";
     }
 
     const rowHtml = (label, blk) => {
@@ -252,16 +426,23 @@
     const selectedBreakdown = document.getElementById("investor-selected-breakdown");
     const selectedExplanation = document.getElementById("investor-selected-explanation");
     const selectedRisk = document.getElementById("investor-selected-risk");
-    const summaryHappening = document.getElementById("investor-summary-happening");
-    const summaryWhy = document.getElementById("investor-summary-why");
-    const summaryHelp = document.getElementById("investor-summary-help");
-    const summaryHurt = document.getElementById("investor-summary-hurt");
-    const summaryConclusion = document.getElementById("investor-summary-conclusion");
-    const summarySources = document.getElementById("investor-summary-sources");
+    const thesisBadge = document.getElementById("investor-thesis-badge");
+    const thesisWhy = document.getElementById("investor-thesis-why");
+    const thesisStrengths = document.getElementById("investor-thesis-strengths");
+    const thesisRisks = document.getElementById("investor-thesis-risks");
+    const thesisSummary = document.getElementById("investor-thesis-summary");
     const oppsStatus = document.getElementById("investor-opps-status");
     const oppsList = document.getElementById("investor-opps-list");
     const rangeButtons = Array.from(document.querySelectorAll(".investor-range-btn[data-range]"));
     const chartLine = document.getElementById("investor-selected-chart-line");
+    const chartArea = document.getElementById("investor-selected-chart-area");
+    const chartSvg = document.getElementById("investor-selected-chart");
+    const chartHoverLayer = document.getElementById("investor-chart-hover-layer");
+    const chartCrosshair = document.getElementById("investor-chart-crosshair-v");
+    const chartHoverDot = document.getElementById("investor-chart-hover-dot");
+    const chartTooltip = document.getElementById("investor-chart-tooltip");
+    const chartTooltipPrice = document.getElementById("investor-chart-tooltip-price");
+    const chartTooltipDate = document.getElementById("investor-chart-tooltip-date");
     const chartGrid = document.getElementById("investor-chart-grid");
     const chartYLabels = document.getElementById("investor-chart-y-labels");
     const chartXLabels = document.getElementById("investor-chart-x-labels");
@@ -275,6 +456,66 @@
     const chartDebugEl = document.getElementById("investor-chart-debug-detail");
     const newsStatus = document.getElementById("investor-news-status");
     const newsList = document.getElementById("investor-news-list");
+    const insiderSummary = document.getElementById("investor-insider-summary");
+    const insiderList = document.getElementById("investor-insider-list");
+    const watchlistGrid = document.getElementById("investor-watchlist-grid");
+    const watchlistEmpty = document.getElementById("investor-watchlist-empty");
+    const searchWatchlistBar = document.getElementById("investor-search-watchlist-bar");
+    const searchSelectedLabel = document.getElementById("investor-search-selected-label");
+    const addWatchlistBtn = document.getElementById("investor-add-watchlist-btn");
+
+    const applyThesisPayload = (payload) => {
+      const thesis = payload?.thesis || {};
+      const score = payload?.score || {};
+      const ratingMeta = thesisRatingMeta(thesis.overall_rating_display || thesis.overall_rating || score.rating);
+
+      if (thesisBadge) {
+        thesisBadge.textContent = ratingMeta.label;
+        thesisBadge.className = `investor-rating-badge investor-rating-badge--${ratingMeta.variant}`;
+      }
+      if (thesisWhy) {
+        thesisWhy.textContent =
+          text(thesis.why_ranked) !== "—" ? text(thesis.why_ranked) : text(score.explanation) || text(score.why_ranked);
+      }
+      renderThesisBulletList(
+        thesisStrengths,
+        thesis.key_strengths || (payload?.sections || {}).what_could_help,
+        "No clear strengths surfaced on this window."
+      );
+      renderThesisBulletList(
+        thesisRisks,
+        thesis.key_risks || (payload?.sections || {}).what_could_hurt,
+        "No specific risks flagged beyond normal market volatility."
+      );
+      if (thesisSummary) {
+        thesisSummary.textContent =
+          text(thesis.short_summary) !== "—"
+            ? text(thesis.short_summary)
+            : text((payload?.sections || {}).overall_conclusion);
+      }
+    };
+
+    const setThesisLoading = () => {
+      if (thesisBadge) {
+        thesisBadge.textContent = "…";
+        thesisBadge.className = "investor-rating-badge investor-rating-badge--neutral";
+      }
+      if (thesisWhy) thesisWhy.textContent = "Building 6–12 month research thesis…";
+      renderThesisBulletList(thesisStrengths, [], "Analyzing…");
+      renderThesisBulletList(thesisRisks, [], "Analyzing…");
+      if (thesisSummary) thesisSummary.textContent = "Summarizing long-term drivers…";
+    };
+
+    const setThesisError = () => {
+      if (thesisBadge) {
+        thesisBadge.textContent = "—";
+        thesisBadge.className = "investor-rating-badge investor-rating-badge--neutral";
+      }
+      if (thesisWhy) thesisWhy.textContent = "Thesis unavailable — try again after data refresh.";
+      renderThesisBulletList(thesisStrengths, [], "—");
+      renderThesisBulletList(thesisRisks, [], "—");
+      if (thesisSummary) thesisSummary.textContent = "Keep this ticker on watch until live data reconnects.";
+    };
 
     const isInvestorChartDebug = () => {
       try {
@@ -296,8 +537,10 @@
     }
 
     let selected = null;
+    let selectedFromSearch = false;
     let currentRange = "1D";
     let opportunitiesIntervalLabel = "6M";
+    let chartPlotState = null;
 
     const syncChartRangeLabel = () => {
       if (chartRangeLabel) chartRangeLabel.textContent = currentRange;
@@ -320,6 +563,12 @@
       return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "2-digit" });
     };
 
+    const hideChartHover = () => {
+      if (chartCrosshair) chartCrosshair.setAttribute("visibility", "hidden");
+      if (chartHoverDot) chartHoverDot.setAttribute("visibility", "hidden");
+      if (chartTooltip) chartTooltip.hidden = true;
+    };
+
     const clearInvestorSvgLayers = () => {
       if (chartGrid) {
         chartGrid.innerHTML = "";
@@ -327,16 +576,25 @@
       }
       if (chartYLabels) chartYLabels.innerHTML = "";
       if (chartXLabels) chartXLabels.innerHTML = "";
+      if (chartArea) {
+        chartArea.setAttribute("d", "");
+        chartArea.setAttribute("class", "investor-selected-chart-area investor-selected-chart-area--neutral");
+      }
       if (chartLine) {
         chartLine.setAttribute("points", "");
+        chartLine.removeAttribute("stroke-dasharray");
+        chartLine.style.strokeDashoffset = "";
+        chartLine.classList.remove("investor-selected-chart-line--draw");
         chartLine.setAttribute("class", "investor-selected-chart-line investor-selected-chart-line--neutral");
       }
       if (chartClipRect) {
         chartClipRect.setAttribute("x", "0");
         chartClipRect.setAttribute("y", "0");
-        chartClipRect.setAttribute("width", "640");
-        chartClipRect.setAttribute("height", "248");
+        chartClipRect.setAttribute("width", String(INVESTOR_CHART_W));
+        chartClipRect.setAttribute("height", String(INVESTOR_CHART_H));
       }
+      hideChartHover();
+      chartPlotState = null;
     };
 
     const neutralQuoteStrip = () => {
@@ -412,20 +670,245 @@
       }
     };
 
-    const setSelected = (item) => {
+    const setSelected = (item, options) => {
       selected = item || null;
+      selectedFromSearch = !!(options && options.fromSearch);
       if (!selectedTicker || !selectedCompany || !selectedExchange || !selectedAssetType) return;
       selectedTicker.textContent = text(item?.ticker);
       selectedCompany.textContent = text(item?.company_name);
       selectedExchange.textContent = text(item?.exchange);
       selectedAssetType.textContent = text(item?.asset_type);
+      updateSearchWatchlistBar();
       if (item?.ticker) {
         void loadInvestorProfile(item.ticker);
         void loadSelectedChart(item.ticker, currentRange);
         void loadNews(item.ticker);
+        void loadInsiderActivity(item.ticker);
         void loadScore(item.ticker);
         void loadResearchSummary(item.ticker);
       }
+    };
+
+    const isOnWatchlist = (ticker) => {
+      const sym = String(ticker || "")
+        .trim()
+        .toUpperCase();
+      if (!sym) return false;
+      return loadWatchlistItems().some((x) => x.ticker === sym);
+    };
+
+    const updateSearchWatchlistBar = () => {
+      if (!searchWatchlistBar || !addWatchlistBtn) return;
+      if (!selectedFromSearch || !selected?.ticker) {
+        searchWatchlistBar.hidden = true;
+        return;
+      }
+      searchWatchlistBar.hidden = false;
+      if (searchSelectedLabel) {
+        const co = selected.company_name ? ` · ${selected.company_name}` : "";
+        searchSelectedLabel.textContent = `${selected.ticker}${co}`;
+      }
+      const onList = isOnWatchlist(selected.ticker);
+      addWatchlistBtn.disabled = onList;
+      addWatchlistBtn.textContent = onList ? "On Watchlist" : "Add to Watchlist";
+      addWatchlistBtn.classList.toggle("investor-add-watchlist-btn--added", onList);
+    };
+
+    const addSelectedToWatchlist = () => {
+      if (!selected?.ticker) return;
+      const sym = String(selected.ticker).trim().toUpperCase();
+      const items = loadWatchlistItems();
+      if (items.some((x) => x.ticker === sym)) {
+        updateSearchWatchlistBar();
+        return;
+      }
+      let companyName = typeof selected.company_name === "string" ? selected.company_name.trim() : "";
+      if (!companyName && selectedCompany && selectedCompany.textContent && selectedCompany.textContent !== "—") {
+        companyName = selectedCompany.textContent.trim();
+      }
+      items.unshift({
+        ticker: sym,
+        company_name: companyName,
+        added_at: new Date().toISOString(),
+      });
+      saveWatchlistItems(items);
+      updateSearchWatchlistBar();
+      void renderWatchlist();
+    };
+
+    const removeFromWatchlist = (ticker) => {
+      const sym = String(ticker || "")
+        .trim()
+        .toUpperCase();
+      if (!sym) return;
+      const next = loadWatchlistItems().filter((x) => x.ticker !== sym);
+      saveWatchlistItems(next);
+      updateSearchWatchlistBar();
+      void renderWatchlist();
+    };
+
+    const fetchWatchlistCardData = async (entry) => {
+      const sym = entry.ticker;
+      let quote = {};
+      let scored = {};
+      let profile = {};
+      try {
+        const [qRes, sRes, pRes] = await Promise.all([
+          fetch(`/api/investor/quote?symbol=${encodeURIComponent(sym)}`),
+          fetch(`/api/investor/score?symbol=${encodeURIComponent(sym)}&interval=6M`),
+          fetch(`/api/investor/profile?symbol=${encodeURIComponent(sym)}`),
+        ]);
+        if (qRes.ok) quote = await qRes.json();
+        if (sRes.ok) scored = await sRes.json();
+        if (pRes.ok) profile = await pRes.json();
+      } catch {
+        /* partial data ok */
+      }
+      const quoteFromScore = scored?.quote && typeof scored.quote === "object" ? scored.quote : {};
+      const outlook =
+        (typeof scored?.explanation === "string" && scored.explanation.trim()) ||
+        (typeof scored?.why_ranked === "string" && scored.why_ranked.trim()) ||
+        "6–12 month outlook unavailable — select for full research.";
+      return {
+        ticker: sym,
+        company_name:
+          (typeof profile?.company_name === "string" && profile.company_name.trim()) ||
+          (typeof quote?.company_name === "string" && quote.company_name.trim()) ||
+          entry.company_name ||
+          sym,
+        price: quote?.price ?? quoteFromScore?.price,
+        change_percent: quote?.change_percent ?? quoteFromScore?.change_percent,
+        score: scored?.score,
+        rating: scored?.rating,
+        outlook,
+        rating_variant: watchlistRatingVariant(scored?.rating),
+      };
+    };
+
+    const buildWatchlistCard = (data, onSelect) => {
+      const card = document.createElement("article");
+      card.className = `investor-stock-card investor-watchlist-card investor-watchlist-card--${data.rating_variant || "neutral"}`;
+      card.setAttribute("role", "listitem");
+      card.tabIndex = 0;
+
+      const top = document.createElement("div");
+      top.className = "investor-stock-top";
+
+      const identity = document.createElement("div");
+      identity.className = "investor-watchlist-identity";
+      const tickerEl = document.createElement("p");
+      tickerEl.className = "investor-ticker";
+      tickerEl.textContent = data.ticker;
+      const companyEl = document.createElement("p");
+      companyEl.className = "investor-company";
+      companyEl.textContent = text(data.company_name);
+      identity.appendChild(tickerEl);
+      identity.appendChild(companyEl);
+
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "investor-watchlist-remove";
+      removeBtn.setAttribute("aria-label", `Remove ${data.ticker} from watchlist`);
+      removeBtn.textContent = "Remove";
+      removeBtn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        removeFromWatchlist(data.ticker);
+      });
+
+      top.appendChild(identity);
+      top.appendChild(removeBtn);
+
+      const metrics = document.createElement("div");
+      metrics.className = "investor-stock-metrics investor-watchlist-metrics";
+
+      const priceN = investorPresentNumber(data.price);
+      const priceRow = document.createElement("p");
+      priceRow.innerHTML = `Price <span>${priceN !== null ? formatUsdPriceInvestor(priceN) : "—"}</span>`;
+
+      const chgTone = deltaToneClass(data.change_percent);
+      const chgRow = document.createElement("p");
+      chgRow.innerHTML = `Daily change <span class="investor-watchlist-delta investor-watchlist-delta--${chgTone}">${formatInvestorSignedPct(
+        data.change_percent
+      )}</span>`;
+
+      const scoreRow = document.createElement("p");
+      const scoreNum = Number(data.score);
+      scoreRow.innerHTML = `${INVESTOR_OUTLOOK_TITLE} score <span>${Number.isFinite(scoreNum) ? `${scoreNum}/100` : "—"}</span>`;
+
+      const ratingBadge = document.createElement("span");
+      ratingBadge.className = `investor-watchlist-rating investor-watchlist-rating--${data.rating_variant || "neutral"}`;
+      ratingBadge.textContent = normalizeInvestorRating(data.rating);
+
+      metrics.appendChild(priceRow);
+      metrics.appendChild(chgRow);
+      metrics.appendChild(scoreRow);
+
+      const ratingRow = document.createElement("div");
+      ratingRow.className = "investor-watchlist-rating-row";
+      ratingRow.appendChild(ratingBadge);
+
+      const outlookLabel = document.createElement("p");
+      outlookLabel.className = "investor-watchlist-outlook-label";
+      outlookLabel.textContent = INVESTOR_OUTLOOK_TITLE;
+
+      const outlookEl = document.createElement("p");
+      outlookEl.className = "investor-watchlist-outlook";
+      outlookEl.textContent = truncateOutlook(data.outlook, 140);
+
+      const openCard = () => {
+        onSelect({
+          ticker: data.ticker,
+          company_name: data.company_name,
+        });
+      };
+      card.addEventListener("click", openCard);
+      card.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault();
+          openCard();
+        }
+      });
+
+      card.appendChild(top);
+      card.appendChild(metrics);
+      card.appendChild(ratingRow);
+      card.appendChild(outlookLabel);
+      card.appendChild(outlookEl);
+      return card;
+    };
+
+    const renderWatchlist = async () => {
+      const items = loadWatchlistItems();
+      if (watchlistEmpty) watchlistEmpty.hidden = items.length > 0;
+      if (!watchlistGrid) return;
+      if (!items.length) {
+        watchlistGrid.hidden = true;
+        watchlistGrid.innerHTML = "";
+        return;
+      }
+      watchlistGrid.hidden = false;
+      watchlistGrid.innerHTML = "";
+      items.forEach((entry) => {
+        const skeleton = document.createElement("article");
+        skeleton.className = "investor-stock-card investor-watchlist-card investor-watchlist-card--loading";
+        skeleton.setAttribute("role", "listitem");
+        skeleton.innerHTML = `<p class="investor-ticker">${escapeHtml(entry.ticker)}</p><p class="investor-watchlist-loading">Loading…</p>`;
+        watchlistGrid.appendChild(skeleton);
+      });
+
+      const rows = await Promise.all(items.map((entry) => fetchWatchlistCardData(entry)));
+      watchlistGrid.innerHTML = "";
+      rows.forEach((data) => {
+        watchlistGrid.appendChild(
+          buildWatchlistCard(data, (item) => {
+            setSelected(item, { fromSearch: false });
+            const panel = document.getElementById("selected-stock-title");
+            if (panel && typeof panel.scrollIntoView === "function") {
+              panel.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
+          })
+        );
+      });
     };
 
     const pointClose = (p) => {
@@ -466,10 +949,98 @@
       return el;
     };
 
+    const mapInvestorChartPoint = (pt, layout) => {
+      const x = layout.padL + ((pt.t - layout.tMin) / layout.tSpan) * layout.usableW;
+      const y = layout.padT + (1 - (pt.y - layout.yLow) / layout.ySpan) * layout.usableH;
+      return { x, y };
+    };
+
+    const showChartHoverAt = (pt, layout, trend) => {
+      if (!pt || !layout) return;
+      const { x, y } = mapInvestorChartPoint(pt, layout);
+      if (chartCrosshair) {
+        chartCrosshair.setAttribute("x1", String(x));
+        chartCrosshair.setAttribute("x2", String(x));
+        chartCrosshair.setAttribute("y1", String(layout.padT));
+        chartCrosshair.setAttribute("y2", String(layout.padT + layout.usableH));
+        chartCrosshair.setAttribute("visibility", "visible");
+      }
+      if (chartHoverDot) {
+        chartHoverDot.setAttribute("cx", String(x));
+        chartHoverDot.setAttribute("cy", String(y));
+        chartHoverDot.setAttribute(
+          "class",
+          `investor-chart-hover-dot investor-chart-hover-dot--${trend === "up" || trend === "down" ? trend : "neutral"}`
+        );
+        chartHoverDot.setAttribute("visibility", "visible");
+      }
+      if (chartTooltip && chartTooltipPrice && chartTooltipDate && chartWrap) {
+        chartTooltipPrice.textContent = formatUsdPriceInvestor(pt.y);
+        chartTooltipDate.textContent = formatInvestorTickTime(pt.t, currentRange);
+        chartTooltip.hidden = false;
+        const wrapRect = chartWrap.getBoundingClientRect();
+        const svgRect = chartSvg ? chartSvg.getBoundingClientRect() : wrapRect;
+        const relX = ((x / INVESTOR_CHART_W) * svgRect.width + (svgRect.left - wrapRect.left));
+        const relY = ((y / INVESTOR_CHART_H) * svgRect.height + (svgRect.top - wrapRect.top));
+        chartTooltip.style.left = `${Math.min(wrapRect.width - 8, Math.max(8, relX))}px`;
+        chartTooltip.style.top = `${Math.max(8, relY)}px`;
+      }
+      const firstPx = layout.firstPx;
+      const periodPct =
+        Number.isFinite(firstPx) && firstPx > 0 ? ((pt.y - firstPx) / firstPx) * 100 : null;
+      setInvestorQuoteStripFromRange(pt.y, pt.y - firstPx, periodPct, trend);
+    };
+
+    const wireInvestorChartHover = () => {
+      if (!chartWrap || chartWrap.dataset.investorHoverWired === "1") return;
+      chartWrap.dataset.investorHoverWired = "1";
+      chartWrap.addEventListener("mousemove", (ev) => {
+        const state = chartPlotState;
+        if (!state || !state.series || state.series.length < 2 || !chartSvg) return;
+        const rect = chartSvg.getBoundingClientRect();
+        if (!rect.width) return;
+        const relX = ((ev.clientX - rect.left) / rect.width) * INVESTOR_CHART_W;
+        let bestIdx = 0;
+        let bestDist = Infinity;
+        for (let i = 0; i < state.series.length; i++) {
+          const mapped = mapInvestorChartPoint(state.series[i], state.layout);
+          const d = Math.abs(mapped.x - relX);
+          if (d < bestDist) {
+            bestDist = d;
+            bestIdx = i;
+          }
+        }
+        showChartHoverAt(state.series[bestIdx], state.layout, state.trend);
+      });
+      chartWrap.addEventListener("mouseleave", () => {
+        hideChartHover();
+        const state = chartPlotState;
+        if (!state) return;
+        setInvestorQuoteStripFromRange(state.lastPx, state.deltaDollar, state.periodPct, state.trend);
+      });
+    };
+
+    const animateInvestorChartLine = () => {
+      if (!chartLine) return;
+      let lineLen = 0;
+      try {
+        lineLen = chartLine.getTotalLength();
+      } catch {
+        lineLen = 0;
+      }
+      if (!Number.isFinite(lineLen) || lineLen <= 0) return;
+      chartLine.style.setProperty("--investor-line-len", String(lineLen));
+      chartLine.setAttribute("stroke-dasharray", String(lineLen));
+      chartLine.style.strokeDashoffset = String(lineLen);
+      chartLine.classList.remove("investor-selected-chart-line--draw");
+      void chartLine.getBoundingClientRect();
+      chartLine.classList.add("investor-selected-chart-line--draw");
+    };
+
     const renderSelectedChart = (points) => {
       if (!chartEmpty) return;
-      if (!chartLine || !chartGrid || !chartYLabels || !chartXLabels || !chartClipRect) {
-        showChartOverlay("Chart SVG layers are missing from the page.", "error");
+      if (!chartLine || !chartArea || !chartGrid || !chartYLabels || !chartXLabels || !chartClipRect) {
+        showChartOverlay("Chart layers are missing from the page.", "error");
         return;
       }
       if (chartWrap) chartWrap.removeAttribute("aria-busy");
@@ -500,8 +1071,8 @@
         return;
       }
 
-      const W = 640;
-      const H = 248;
+      const W = INVESTOR_CHART_W;
+      const H = INVESTOR_CHART_H;
       const padL = 56;
       const padR = 14;
       const padT = 14;
@@ -527,6 +1098,24 @@
       const tMax = series[series.length - 1].t;
       const tSpan = Math.max(tMax - tMin, 60);
 
+      const layout = {
+        W,
+        H,
+        padL,
+        padR,
+        padT,
+        padB,
+        usableW,
+        usableH,
+        yLow,
+        yHigh,
+        ySpan,
+        tMin,
+        tMax,
+        tSpan,
+        firstPx: series[0].y,
+      };
+
       const fmtYtick = (v) => {
         const mx = Math.max(Math.abs(yHigh), Math.abs(yLow));
         if (mx >= 2500) return v.toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -540,23 +1129,24 @@
         yTicks.push(yHigh - ((yHigh - yLow) * i) / yDivs);
       }
 
-      const xLine = svgEl("line", {
-        class: "investor-chart-grid-axis",
-        x1: String(padL),
-        x2: String(W - padR),
-        y1: String(padT + usableH),
-        y2: String(padT + usableH),
-      });
-      chartGrid.appendChild(xLine);
-
-      const yLine = svgEl("line", {
-        class: "investor-chart-grid-axis",
-        x1: String(padL),
-        x2: String(padL),
-        y1: String(padT),
-        y2: String(padT + usableH),
-      });
-      chartGrid.appendChild(yLine);
+      chartGrid.appendChild(
+        svgEl("line", {
+          class: "investor-chart-grid-axis",
+          x1: String(padL),
+          x2: String(W - padR),
+          y1: String(padT + usableH),
+          y2: String(padT + usableH),
+        })
+      );
+      chartGrid.appendChild(
+        svgEl("line", {
+          class: "investor-chart-grid-axis",
+          x1: String(padL),
+          x2: String(padL),
+          y1: String(padT),
+          y2: String(padT + usableH),
+        })
+      );
 
       yTicks.forEach((yv) => {
         const fy = padT + (1 - (yv - yLow) / ySpan) * usableH;
@@ -594,13 +1184,13 @@
         chartXLabels.appendChild(lx);
       }
 
-      const pointsAttr = series
-        .map((pt) => {
-          const x = padL + ((pt.t - tMin) / tSpan) * usableW;
-          const y = padT + (1 - (pt.y - yLow) / ySpan) * usableH;
-          return `${x.toFixed(2)},${y.toFixed(2)}`;
-        })
-        .join(" ");
+      const coords = series.map((pt) => mapInvestorChartPoint(pt, layout));
+      const pointsAttr = coords.map((c) => `${c.x.toFixed(2)},${c.y.toFixed(2)}`).join(" ");
+      const baseY = padT + usableH;
+      const areaD =
+        `M ${coords[0].x.toFixed(2)} ${baseY.toFixed(2)} ` +
+        coords.map((c) => `L ${c.x.toFixed(2)} ${c.y.toFixed(2)}`).join(" ") +
+        ` L ${coords[coords.length - 1].x.toFixed(2)} ${baseY.toFixed(2)} Z`;
 
       const firstPx = series[0].y;
       const lastPx = series[series.length - 1].y;
@@ -609,18 +1199,26 @@
       const deltaDollar = lastPx - firstPx;
       const strokeTrend = trendStrokeClassFromPct(periodPct);
 
-      chartLine.setAttribute(
-        "class",
-        `investor-selected-chart-line investor-selected-chart-line--${strokeTrend}`
-      );
+      chartArea.setAttribute("class", `investor-selected-chart-area investor-selected-chart-area--${strokeTrend}`);
+      chartArea.setAttribute("d", areaD);
+      chartLine.setAttribute("class", `investor-selected-chart-line investor-selected-chart-line--${strokeTrend}`);
       chartLine.setAttribute("points", pointsAttr);
+      animateInvestorChartLine();
       setInvestorQuoteStripFromRange(lastPx, deltaDollar, periodPct, strokeTrend);
+
+      chartPlotState = {
+        series,
+        layout: { ...layout, firstPx },
+        lastPx,
+        deltaDollar,
+        periodPct,
+        trend: strokeTrend,
+      };
 
       const aria = [
         `Closing-price line chart, range ${currentRange}.`,
-        `Last plotted close ${formatUsdPriceInvestor(lastPx)}.`,
+        `Last close ${formatUsdPriceInvestor(lastPx)}.`,
         `Range change ${formatSignedRangeDollar(deltaDollar)} (${formatSignedPeriodPct(periodPct)}).`,
-        "Not candles — single close line only.",
       ].join(" ");
       if (chartWrap) chartWrap.setAttribute("aria-label", aria);
 
@@ -655,17 +1253,20 @@
             httpMsg ||
             "Request failed.";
           setChartDebugDetail(isInvestorChartDebug() ? debugLine : "");
-          showChartOverlay((httpMsg && String(httpMsg).trim()) || `HTTP ${res.status}`, "error");
+          showChartOverlay(friendlyInvestorChartError(httpMsg) || `HTTP ${res.status}`, "error");
           return;
         }
         if (payload?.error) {
-          const msg = typeof payload.message === "string" && payload.message.trim() ? payload.message : "Chart unavailable.";
+          const msg =
+            typeof payload.message === "string" && payload.message.trim()
+              ? payload.message
+              : "Closing-price history unavailable.";
           const debugLine =
             (payload.debug && payload.debug.detail) ||
             payload.debug_detail ||
             msg;
           setChartDebugDetail(isInvestorChartDebug() ? debugLine : "");
-          showChartOverlay(msg, "error");
+          showChartOverlay(friendlyInvestorChartError(msg), "error");
           return;
         }
         const raw = Array.isArray(payload?.points) ? payload.points : [];
@@ -732,11 +1333,12 @@
       return "Date unavailable";
     };
 
-    const renderNews = (items) => {
+    const renderNews = (items, limit) => {
       if (!newsList) return;
       newsList.innerHTML = "";
       if (!Array.isArray(items) || !items.length) return;
-      items.forEach((item) => {
+      const cap = typeof limit === "number" && limit > 0 ? limit : 3;
+      items.slice(0, cap).forEach((item) => {
         if (!item || typeof item !== "object") return;
         if (typeof item.headline !== "string" || !item.headline.trim()) return;
         const row = document.createElement("article");
@@ -758,49 +1360,134 @@
 
         const meta = document.createElement("p");
         meta.className = "investor-news-meta";
-        const dateStr = investorNewsPublishedLabel(item.published_at);
-        meta.textContent = `${text(item.source)} · ${dateStr}`;
+        const sourceEl = document.createElement("span");
+        sourceEl.className = "investor-news-meta-source";
+        sourceEl.textContent = text(item.source);
+        const dateEl = document.createElement("span");
+        dateEl.className = "investor-news-meta-date";
+        dateEl.textContent = investorNewsPublishedLabel(item.published_at);
+        meta.appendChild(sourceEl);
+        meta.appendChild(dateEl);
 
         row.appendChild(title);
         row.appendChild(meta);
 
         const sumRaw = item.summary;
-        if (typeof sumRaw === "string" && sumRaw.trim()) {
+        const snippet = typeof sumRaw === "string" && sumRaw.trim() ? truncateNewsSnippet(sumRaw, 160) : "";
+        if (snippet) {
           const summary = document.createElement("p");
           summary.className = "investor-news-summary";
-          summary.textContent = sumRaw.trim();
+          summary.textContent = snippet;
           row.appendChild(summary);
-        }
-
-        if (isLikelyHttpUrl(urlStr)) {
-          const urlRow = document.createElement("p");
-          urlRow.className = "investor-news-url-row";
-          const lab = document.createElement("span");
-          lab.className = "investor-news-url-lab";
-          lab.textContent = "URL";
-          urlRow.appendChild(lab);
-          urlRow.appendChild(document.createTextNode(": "));
-          const ua = document.createElement("a");
-          ua.href = urlStr;
-          ua.className = "investor-news-url";
-          ua.target = "_blank";
-          ua.rel = "noopener noreferrer";
-          ua.textContent = urlStr;
-          urlRow.appendChild(ua);
-          row.appendChild(urlRow);
         }
 
         newsList.appendChild(row);
       });
     };
 
+    const formatInsiderUsd = (v) => {
+      const n = investorPresentNumber(v);
+      if (n === null) return null;
+      if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
+      if (n >= 10_000) return `$${Math.round(n).toLocaleString()}`;
+      return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`;
+    };
+
+    const setInsiderLoading = () => {
+      if (insiderSummary) {
+        insiderSummary.textContent = "Loading recent insider filings…";
+        insiderSummary.className = "investor-insider-summary investor-insider-summary--neutral";
+      }
+      if (insiderList) insiderList.innerHTML = "";
+    };
+
+    const setInsiderEmpty = (message, tone) => {
+      const t = tone === "bullish" || tone === "cautious" ? tone : "neutral";
+      if (insiderSummary) {
+        insiderSummary.textContent =
+          message || "No recent insider activity found";
+        insiderSummary.className = `investor-insider-summary investor-insider-summary--${t}`;
+      }
+      if (insiderList) insiderList.innerHTML = "";
+    };
+
+    const renderInsiderRows = (items, summaryText, tone) => {
+      if (!insiderList) return;
+      insiderList.innerHTML = "";
+      const t = tone === "bullish" || tone === "cautious" ? tone : "neutral";
+      if (insiderSummary) {
+        insiderSummary.textContent = summaryText || "Recent insider activity appears neutral";
+        insiderSummary.className = `investor-insider-summary investor-insider-summary--${t}`;
+      }
+      items.forEach((row) => {
+        if (!row || typeof row !== "object") return;
+        const el = document.createElement("div");
+        el.className = "investor-insider-row";
+        el.setAttribute("role", "listitem");
+        const side = String(row.side || "Other");
+        const sideClass =
+          side === "Buy" ? "buy" : side === "Sell" ? "sell" : "other";
+        const shares =
+          row.shares !== null && row.shares !== undefined && Number.isFinite(Number(row.shares))
+            ? Number(row.shares).toLocaleString()
+            : "—";
+        const value = formatInsiderUsd(row.transaction_value_usd) || "—";
+        const role = row.role_title ? String(row.role_title) : "—";
+        const date = row.transaction_date || row.filing_date || "—";
+        el.innerHTML = `
+          <div class="investor-insider-row-top">
+            <span class="investor-insider-side investor-insider-side--${sideClass}">${escapeHtml(side)}</span>
+            <span class="investor-insider-name">${escapeHtml(String(row.insider_name || "—"))}</span>
+            <span class="investor-insider-date">${escapeHtml(String(date))}</span>
+          </div>
+          <div class="investor-insider-row-meta">
+            <span class="investor-insider-meta">${escapeHtml(role)}</span>
+            <span class="investor-insider-meta">${escapeHtml(shares)} sh</span>
+            <span class="investor-insider-meta">${escapeHtml(value)}</span>
+          </div>
+        `;
+        insiderList.appendChild(el);
+      });
+    };
+
+    const loadInsiderActivity = async (symbol) => {
+      if (!symbol) return;
+      setInsiderLoading();
+      try {
+        const res = await fetch(`/api/investor/insiders?symbol=${encodeURIComponent(symbol)}`);
+        let payload = null;
+        try {
+          payload = await res.json();
+        } catch {
+          payload = null;
+        }
+        if (!res.ok || !payload) {
+          setInsiderEmpty("No recent insider activity found", "neutral");
+          return;
+        }
+        const items = Array.isArray(payload.items) ? payload.items : [];
+        const tone = payload.summary_tone || "neutral";
+        if (!items.length || payload.empty) {
+          setInsiderEmpty(payload.message || "No recent insider activity found", tone);
+          return;
+        }
+        renderInsiderRows(
+          items,
+          payload.summary_text || "Recent insider activity appears neutral",
+          tone
+        );
+      } catch {
+        setInsiderEmpty("No recent insider activity found", "neutral");
+      }
+    };
+
     const loadNews = async (symbol) => {
       if (!symbol) return;
-      setNewsStatus("Loading news…");
+      setNewsStatus("Loading supporting headlines…");
       clearNews();
       try {
         const res = await fetch(
-          `/api/investor/news?symbol=${encodeURIComponent(symbol)}&limit=${encodeURIComponent(String(96))}`
+          `/api/investor/news?symbol=${encodeURIComponent(symbol)}&limit=${encodeURIComponent(String(12))}`
         );
         const resText = await res.text();
         let payload = null;
@@ -823,11 +1510,12 @@
         }
         const items = Array.isArray(payload?.items) ? payload.items : [];
         if (!items.length) {
-          setNewsStatus("No recent news found.");
+          setNewsStatus("No recent headlines — thesis still reflects price and score pillars.");
           return;
         }
-        setNewsStatus(`${items.length} article${items.length === 1 ? "" : "s"} · newest first`);
-        renderNews(items);
+        const shown = Math.min(3, items.length);
+        setNewsStatus(`${shown} headline${shown === 1 ? "" : "s"} supporting the thesis`);
+        renderNews(items, 3);
       } catch {
         setNewsStatus("Could not load news.");
         clearNews();
@@ -837,21 +1525,38 @@
     };
 
     const setScoreLoading = () => {
-      if (selectedScore) selectedScore.textContent = "Loading...";
-      if (selectedRating) selectedRating.textContent = "Loading...";
-      if (selectedBreakdown) selectedBreakdown.textContent = "Loading...";
-      if (selectedExplanation) selectedExplanation.textContent = "Calculating evidence-based view...";
-      if (selectedRisk) selectedRisk.textContent = "Assessing risk...";
+      if (selectedScore) selectedScore.textContent = "…";
+      if (selectedRating) {
+        selectedRating.textContent = "…";
+        selectedRating.className = "investor-rating-badge investor-rating-badge--neutral";
+      }
+      if (selectedBreakdown) {
+        selectedBreakdown.innerHTML = "";
+        const row = document.createElement("div");
+        row.className = "investor-pillar-row investor-pillar-row--loading";
+        row.textContent = "Loading research pillars…";
+        selectedBreakdown.appendChild(row);
+      }
+      if (selectedExplanation) {
+        selectedExplanation.textContent = "Building 6–12 month research view…";
+      }
+      if (selectedRisk) selectedRisk.textContent = "Assessing long-term risk factors…";
     };
 
     const setScoreError = () => {
       if (selectedScore) selectedScore.textContent = "—";
-      if (selectedRating) selectedRating.textContent = "—";
-      if (selectedBreakdown) selectedBreakdown.textContent = "—";
-      if (selectedExplanation) {
-        selectedExplanation.textContent = "Scoring data is unavailable right now. Keep this ticker on watch.";
+      if (selectedRating) {
+        selectedRating.textContent = "—";
+        selectedRating.className = "investor-rating-badge investor-rating-badge--neutral";
       }
-      if (selectedRisk) selectedRisk.textContent = "Risk warning: market conditions can change quickly.";
+      if (selectedBreakdown) renderInvestorPillarBreakdown(selectedBreakdown, {}, null);
+      if (selectedExplanation) {
+        selectedExplanation.textContent =
+          "Research score unavailable — keep this name on watch and retry when data reconnects.";
+      }
+      if (selectedRisk) {
+        selectedRisk.textContent = `Long-term thesis can shift with earnings, macro, or sentiment. ${INVESTOR_RESEARCH_DISCLAIMER}`;
+      }
     };
 
     const loadScore = async (symbol) => {
@@ -867,103 +1572,41 @@
         }
         const payload = await res.json();
         if (selectedScore) selectedScore.textContent = `${text(payload?.score)}/100`;
-        if (selectedRating) selectedRating.textContent = text(payload?.rating);
-        if (selectedBreakdown) {
-          const b = payload?.breakdown || {};
-          selectedBreakdown.textContent = [
-            `Trend ${text(b.trend_score)}`,
-            `Momentum ${text(b.momentum_score)}`,
-            `News ${text(b.news_score)}`,
-            `Risk ${text(b.risk_score)}`,
-            `Consistency ${text(b.consistency_score)}`,
-            `Score ${text(b.overall_investor_score)}`,
-          ].join(" · ");
-        }
+        applyInvestorRatingBadge(selectedRating, payload?.rating);
+        renderInvestorPillarBreakdown(
+          selectedBreakdown,
+          payload?.breakdown || {},
+          payload?.score_pillars
+        );
         if (selectedExplanation) {
           const why = typeof payload?.why_ranked === "string" ? payload.why_ranked.trim() : "";
           selectedExplanation.textContent = why || text(payload?.explanation);
         }
-        if (selectedRisk) selectedRisk.textContent = text(payload?.risk_warning);
+        if (selectedRisk) {
+          selectedRisk.textContent =
+            text(payload?.risk_warning) ||
+            `Long-term risk factors under review. ${INVESTOR_RESEARCH_DISCLAIMER}`;
+        }
       } catch {
         setScoreError();
       }
     };
 
-    const setSummaryLoading = () => {
-      if (summaryHappening) summaryHappening.textContent = "Generating structured summary...";
-      if (summaryWhy) summaryWhy.textContent = "Analyzing why this setup matters...";
-      if (summaryHelp) summaryHelp.textContent = "Loading...";
-      if (summaryHurt) summaryHurt.textContent = "Loading...";
-      if (summaryConclusion) summaryConclusion.textContent = "Loading...";
-      if (summarySources) summarySources.innerHTML = "";
-    };
-
-    const setSummaryError = () => {
-      if (summaryHappening) summaryHappening.textContent = "Summary is unavailable right now.";
-      if (summaryWhy) summaryWhy.textContent = "Try again after data refresh.";
-      if (summaryHelp) summaryHelp.textContent = "—";
-      if (summaryHurt) summaryHurt.textContent = "—";
-      if (summaryConclusion) summaryConclusion.textContent = "Keep this ticker on watch.";
-      if (summarySources) summarySources.innerHTML = "";
-    };
-
-    const renderSources = (sources) => {
-      if (!summarySources) return;
-      summarySources.innerHTML = "";
-      if (!Array.isArray(sources) || !sources.length) {
-        const empty = document.createElement("p");
-        empty.className = "investor-source-row";
-        empty.textContent = "No sources available.";
-        summarySources.appendChild(empty);
-        return;
-      }
-      sources.forEach((src) => {
-        const row = document.createElement("div");
-        row.className = "investor-source-row";
-        const label = text(src?.label);
-        const detail = text(src?.detail);
-        const url = String(src?.url || "").trim();
-        if (url) {
-          const a = document.createElement("a");
-          a.href = url;
-          a.target = "_blank";
-          a.rel = "noopener noreferrer";
-          a.textContent = `${label}: ${detail}`;
-          row.appendChild(a);
-        } else {
-          row.textContent = `${label}: ${detail}`;
-        }
-        summarySources.appendChild(row);
-      });
-    };
-
     const loadResearchSummary = async (symbol) => {
       if (!symbol) return;
-      setSummaryLoading();
+      setThesisLoading();
       try {
         const res = await fetch(
           `/api/investor/research-summary?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(currentRange)}`
         );
         if (!res.ok) {
-          setSummaryError();
+          setThesisError();
           return;
         }
         const payload = await res.json();
-        const sections = payload?.sections || {};
-        if (summaryHappening) summaryHappening.textContent = text(sections.what_is_happening);
-        if (summaryWhy) summaryWhy.textContent = text(sections.why_it_matters);
-        if (summaryHelp) {
-          const arr = Array.isArray(sections.what_could_help) ? sections.what_could_help : [];
-          summaryHelp.textContent = arr.length ? arr.join(" ") : "—";
-        }
-        if (summaryHurt) {
-          const arr = Array.isArray(sections.what_could_hurt) ? sections.what_could_hurt : [];
-          summaryHurt.textContent = arr.length ? arr.join(" ") : "—";
-        }
-        if (summaryConclusion) summaryConclusion.textContent = text(sections.overall_conclusion);
-        renderSources(payload?.sources);
+        applyThesisPayload(payload);
       } catch {
-        setSummaryError();
+        setThesisError();
       }
     };
 
@@ -1006,14 +1649,7 @@
       `;
     };
 
-    const ratingBadgeVariant = (item) => {
-      const v = String(item?.rating_badge_variant || "").toLowerCase();
-      if (v === "bullish" || v === "neutral" || v === "cautious") return v;
-      const lab = String(item?.rating_badge || item?.rating || "").toLowerCase();
-      if (lab.includes("bull")) return "bullish";
-      if (lab.includes("caut")) return "cautious";
-      return "neutral";
-    };
+    const ratingBadgeVariant = (item) => investorRatingVariant(item?.rating_badge || item?.rating);
 
     const deltaToneFromPct = (pct) => {
       if (pct === null || pct === undefined || !Number.isFinite(Number(pct))) return "muted";
@@ -1031,21 +1667,22 @@
 
       const unavailable = "Unavailable";
       const trimStr = (v) => (typeof v === "string" ? v.trim() : "");
-      const ratingText = trimStr(item?.rating_badge) || trimStr(item?.rating) || unavailable;
+      const rawRating = trimStr(item?.rating_badge) || trimStr(item?.rating);
+      const ratingText = rawRating ? normalizeInvestorRating(rawRating) : unavailable;
       const scoreNum = Number(item?.score);
       const scoreText = Number.isFinite(scoreNum) ? String(scoreNum) : unavailable;
       const companyText = trimStr(item?.company_name) || unavailable;
 
       const formatUsd = (v) => {
-        const n = Number(v);
-        if (!Number.isFinite(n)) return null;
+        const n = investorPresentNumber(v);
+        if (n === null) return null;
         const frac = Math.abs(n) >= 1 ? 2 : 4;
         return `$${n.toLocaleString(undefined, { minimumFractionDigits: frac, maximumFractionDigits: frac })}`;
       };
 
       const formatSignedUsd = (v) => {
-        const n = Number(v);
-        if (!Number.isFinite(n)) return null;
+        const n = investorPresentNumber(v);
+        if (n === null) return null;
         const sign = n >= 0 ? "+" : "−";
         const abs = Math.abs(n);
         const frac = abs >= 1 ? 2 : 4;
@@ -1053,8 +1690,8 @@
       };
 
       const formatSignedPct = (v) => {
-        const n = Number(v);
-        if (!Number.isFinite(n)) return null;
+        const n = investorPresentNumber(v);
+        if (n === null) return null;
         const sign = n >= 0 ? "+" : "−";
         return `${sign}${Math.abs(n).toFixed(2)}%`;
       };
@@ -1077,7 +1714,7 @@
       scorePill.className = "investor-opp-scorepill";
       const scoreLab = document.createElement("span");
       scoreLab.className = "investor-opp-scorepill-lab";
-      scoreLab.textContent = "Score";
+      scoreLab.textContent = "6–12M score";
       const scoreVal = document.createElement("span");
       scoreVal.className = "investor-opp-scorepill-val";
       scoreVal.textContent = scoreText;
@@ -1132,14 +1769,21 @@
       sparkHost.className = "investor-opp-spark-host";
       sparkHost.innerHTML = opportunitySparkRowHtml(item);
 
-      const thesis = document.createElement("p");
-      thesis.className = "investor-opp-thesis";
+      const thesis = document.createElement("div");
+      thesis.className = "investor-opp-outlook-block";
+      const thesisLabel = document.createElement("p");
+      thesisLabel.className = "investor-opp-outlook-label";
+      thesisLabel.textContent = INVESTOR_OUTLOOK_TITLE;
+      const thesisBody = document.createElement("p");
+      thesisBody.className = "investor-opp-thesis";
       const thesisText = typeof item?.reason_short === "string" ? item.reason_short.trim() : "";
       if (thesisText) {
-        thesis.textContent = thesisText;
+        thesisBody.textContent = thesisText;
       } else {
-        thesis.hidden = true;
+        thesisBody.hidden = true;
       }
+      thesis.appendChild(thesisLabel);
+      thesis.appendChild(thesisBody);
 
       const tierLine = document.createElement("p");
       tierLine.className = "investor-opp-tier-hint";
@@ -1253,12 +1897,15 @@
       card.appendChild(metrics);
 
       card.addEventListener("click", () => {
-        setSelected({
-          ticker: item?.ticker,
-          company_name: item?.company_name,
-          exchange: item?.exchange,
-          asset_type: item?.asset_type,
-        });
+        setSelected(
+          {
+            ticker: item?.ticker,
+            company_name: item?.company_name,
+            exchange: item?.exchange,
+            asset_type: item?.asset_type,
+          },
+          { fromSearch: false }
+        );
         const selectedPanel = document.getElementById("selected-stock-title");
         if (selectedPanel && typeof selectedPanel.scrollIntoView === "function") {
           selectedPanel.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1277,28 +1924,37 @@
     };
 
     const loadOpportunities = async () => {
-      if (oppsStatus) oppsStatus.textContent = "Scanning stock universe for top opportunities...";
+      if (oppsStatus) oppsStatus.textContent = "Ranking watchlist candidates for a 6–12 month outlook…";
       if (oppsList) oppsList.innerHTML = "";
+      const oppsTitle = document.getElementById("investor-opportunities-title");
       try {
-        const res = await fetch("/api/investor/opportunities?limit=3&interval=6M");
+        const res = await fetch("/api/investor/opportunities?interval=6M");
         if (!res.ok) {
-          if (oppsStatus) oppsStatus.textContent = "Unable to load recommendations right now.";
+          if (oppsStatus) oppsStatus.textContent = "Unable to load watchlist rankings right now.";
           void refreshInvestorDiagnostics();
           return;
         }
         const payload = await res.json();
         const items = Array.isArray(payload?.items) ? payload.items : [];
         opportunitiesIntervalLabel = typeof payload?.interval === "string" ? payload.interval : "6M";
+        if (oppsTitle && payload?.list_heading) {
+          oppsTitle.textContent = payload.list_heading;
+        }
         if (!items.length) {
-          if (oppsStatus) oppsStatus.textContent = "No opportunities available right now.";
+          if (oppsStatus) oppsStatus.textContent = "No watchlist candidates available right now.";
           void refreshInvestorDiagnostics();
           return;
         }
-        if (oppsStatus) oppsStatus.textContent = `Top ${items.length} opportunities from screened individual stocks.`;
+        const sub = payload?.list_subheading || "Ranked for a 6–12 month research outlook.";
+        const disclaimer = payload?.research_disclaimer || "This is research support, not financial advice.";
+        const dataNote = payload?.data_quality_note ? ` ${payload.data_quality_note}` : "";
+        if (oppsStatus) {
+          oppsStatus.textContent = `${sub}${dataNote} ${disclaimer}`;
+        }
         renderOpportunities(items);
         void refreshInvestorDiagnostics();
       } catch {
-        if (oppsStatus) oppsStatus.textContent = "Unable to load recommendations right now.";
+        if (oppsStatus) oppsStatus.textContent = "Unable to load watchlist rankings right now.";
         if (oppsList) oppsList.innerHTML = "";
         void refreshInvestorDiagnostics();
       }
@@ -1318,7 +1974,7 @@
           <span class="investor-search-result-company">${text(item.company_name)}</span>
           <span class="investor-search-result-meta">${text(item.exchange)} • ${text(item.type || item.asset_type)}</span>
         `;
-        row.addEventListener("click", () => setSelected(item));
+        row.addEventListener("click", () => setSelected(item, { fromSearch: true }));
         results.appendChild(row);
       });
     };
@@ -1368,6 +2024,12 @@
       });
     }
 
+    if (addWatchlistBtn) {
+      addWatchlistBtn.addEventListener("click", () => {
+        addSelectedToWatchlist();
+      });
+    }
+
     rangeButtons.forEach((btn) => {
       btn.addEventListener("click", () => {
         const range = String(btn.dataset.range || "1D").toUpperCase();
@@ -1383,6 +2045,13 @@
     });
 
     void loadOpportunities();
+    void renderWatchlist();
+    document.addEventListener("ragx-active-tab", (ev) => {
+      if ((ev.detail || {}).tab === "investor" && loadWatchlistItems().length > 0) {
+        void renderWatchlist();
+      }
+    });
+    wireInvestorChartHover();
   }
 
   if (document.readyState === "loading") {
