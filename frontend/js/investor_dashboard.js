@@ -441,10 +441,12 @@
     const selectedExplanation = document.getElementById("investor-selected-explanation");
     const selectedRisk = document.getElementById("investor-selected-risk");
     const thesisBadge = document.getElementById("investor-thesis-badge");
+    const thesisStockLine = document.getElementById("investor-thesis-stock-line");
     const thesisWhy = document.getElementById("investor-thesis-why");
     const thesisStrengths = document.getElementById("investor-thesis-strengths");
     const thesisRisks = document.getElementById("investor-thesis-risks");
     const thesisSummary = document.getElementById("investor-thesis-summary");
+    const selectedWatchlistStar = document.getElementById("investor-selected-watchlist-star");
     const oppsStatus = document.getElementById("investor-opps-status");
     const oppsList = document.getElementById("investor-opps-list");
     const rangeButtons = Array.from(document.querySelectorAll(".investor-range-btn[data-range]"));
@@ -475,57 +477,211 @@
     const watchlistGrid = document.getElementById("investor-watchlist-grid");
     const watchlistEmpty = document.getElementById("investor-watchlist-empty");
 
-    const applyThesisPayload = (payload) => {
-      const thesis = payload?.thesis || {};
-      const score = payload?.score || {};
-      const ratingMeta = thesisRatingMeta(thesis.overall_rating_display || thesis.overall_rating || score.rating);
+    let selected = null;
+    let selectedFromSearch = false;
+    let currentRange = "1D";
+    const RESEARCH_INTERVAL = "6M";
+    let researchLoadSeq = 0;
+    let opportunitiesIntervalLabel = "6M";
+    let chartPlotState = null;
 
+    const formatThesisStockLine = (symbol, companyName) => {
+      const sym = String(symbol || "").trim().toUpperCase();
+      const co = typeof companyName === "string" ? companyName.trim() : "";
+      if (!sym) return "Select a stock to load long-term research.";
+      return co ? `${sym} · ${co}` : sym;
+    };
+
+    const thesisCopy = (value, fallback) => {
+      const t = typeof value === "string" ? value.trim() : "";
+      return t || fallback;
+    };
+
+    const strengthsFromScore = (score) => {
+      const pillars = Array.isArray(score?.score_pillars) ? score.score_pillars : [];
+      const ranked = pillars
+        .filter((p) => p && typeof p.label === "string")
+        .sort((a, b) => {
+          const ar = Number(a.points) / Math.max(Number(a.max_points) || 1, 1);
+          const br = Number(b.points) / Math.max(Number(b.max_points) || 1, 1);
+          return br - ar;
+        })
+        .slice(0, 3)
+        .map((p) => {
+          const pts = Number(p.points);
+          const max = Number(p.max_points);
+          if (Number.isFinite(pts) && Number.isFinite(max)) {
+            return `${p.label} contributes ${pts}/${max} toward the long-term score.`;
+          }
+          return String(p.label);
+        });
+      if (ranked.length) return ranked;
+      const expl = typeof score?.explanation === "string" ? score.explanation.trim() : "";
+      return expl ? [expl] : [];
+    };
+
+    const risksFromScore = (score) => {
+      const rows = Array.isArray(score?.risk_factors)
+        ? score.risk_factors.filter((x) => typeof x === "string" && x.trim())
+        : [];
+      if (rows.length) return rows.slice(0, 3).map((x) => x.trim().replace(/\.$/, "") + ".");
+      return [
+        "Macro shifts can change the long-term setup.",
+        "Earnings or guidance surprises may alter the research view.",
+        "Headline sentiment can move faster than fundamentals.",
+      ];
+    };
+
+    const applyScorePanel = (payload) => {
+      if (selectedScore) selectedScore.textContent = `${text(payload?.score)}/100`;
+      applyInvestorRatingBadge(selectedRating, payload?.rating);
+      renderInvestorPillarBreakdown(
+        selectedBreakdown,
+        payload?.breakdown || {},
+        payload?.score_pillars
+      );
+      if (selectedExplanation) {
+        const why = typeof payload?.why_ranked === "string" ? payload.why_ranked.trim() : "";
+        selectedExplanation.textContent = why || thesisCopy(payload?.explanation, "Long-term score context loading…");
+      }
+      if (selectedRisk) {
+        selectedRisk.textContent =
+          thesisCopy(payload?.risk_warning, "") ||
+          `Long-term risk factors under review. ${INVESTOR_RESEARCH_DISCLAIMER}`;
+      }
+    };
+
+    const applyThesisFromScore = (score, meta) => {
+      const symbol = meta?.symbol || selected?.ticker;
+      const companyName = meta?.companyName ?? selected?.company_name;
+      if (thesisStockLine) {
+        thesisStockLine.textContent = formatThesisStockLine(symbol, companyName);
+      }
+      const ratingMeta = thesisRatingMeta(score?.rating);
       if (thesisBadge) {
         thesisBadge.textContent = ratingMeta.label;
         thesisBadge.className = `investor-rating-badge investor-rating-badge--${ratingMeta.variant}`;
       }
       if (thesisWhy) {
-        thesisWhy.textContent =
-          text(thesis.why_ranked) !== "—" ? text(thesis.why_ranked) : text(score.explanation) || text(score.why_ranked);
+        thesisWhy.textContent = thesisCopy(
+          score?.why_ranked || score?.explanation,
+          "Long-term research context is limited right now — keep this name on watch."
+        );
       }
       renderThesisBulletList(
         thesisStrengths,
-        thesis.key_strengths || (payload?.sections || {}).what_could_help,
-        "No clear strengths surfaced on this window."
+        strengthsFromScore(score),
+        "No clear strengths surfaced from current research inputs."
       );
       renderThesisBulletList(
         thesisRisks,
-        thesis.key_risks || (payload?.sections || {}).what_could_hurt,
+        risksFromScore(score),
         "No specific risks flagged beyond normal market volatility."
       );
       if (thesisSummary) {
-        thesisSummary.textContent =
-          text(thesis.short_summary) !== "—"
-            ? text(thesis.short_summary)
-            : text((payload?.sections || {}).overall_conclusion);
+        const scoreNum = Number(score?.score);
+        const rating = normalizeInvestorRating(score?.rating);
+        const base =
+          typeof score?.explanation === "string" && score.explanation.trim()
+            ? score.explanation.trim()
+            : Number.isFinite(scoreNum)
+              ? `${String(symbol || "This name").toUpperCase()} scores ${scoreNum}/100 (${rating}) on long-term research pillars.`
+              : "Long-term summary unavailable from current score data.";
+        thesisSummary.textContent = `${base} ${INVESTOR_RESEARCH_DISCLAIMER}`;
       }
     };
 
-    const setThesisLoading = () => {
+    const applyThesisPayload = (payload, meta) => {
+      const thesis = payload?.thesis || {};
+      const score = payload?.score || {};
+      const symbol = payload?.symbol || meta?.symbol || selected?.ticker;
+      const companyName = meta?.companyName ?? selected?.company_name;
+
+      if (thesisStockLine) {
+        thesisStockLine.textContent = formatThesisStockLine(symbol, companyName);
+      }
+
+      const ratingMeta = thesisRatingMeta(thesis.overall_rating_display || thesis.overall_rating || score.rating);
       if (thesisBadge) {
-        thesisBadge.textContent = "…";
+        thesisBadge.textContent = ratingMeta.label;
+        thesisBadge.className = `investor-rating-badge investor-rating-badge--${ratingMeta.variant}`;
+      }
+      if (thesisWhy) {
+        thesisWhy.textContent = thesisCopy(
+          thesis.why_ranked || score.why_ranked || score.explanation,
+          "Long-term research context is limited right now — keep this name on watch."
+        );
+      }
+      const strengthItems =
+        (Array.isArray(thesis.key_strengths) && thesis.key_strengths.length
+          ? thesis.key_strengths
+          : null) ||
+        (payload?.sections || {}).what_could_help ||
+        strengthsFromScore(score);
+      const riskItems =
+        (Array.isArray(thesis.key_risks) && thesis.key_risks.length ? thesis.key_risks : null) ||
+        (payload?.sections || {}).what_could_hurt ||
+        risksFromScore(score);
+      renderThesisBulletList(
+        thesisStrengths,
+        strengthItems,
+        "No clear strengths surfaced from current research inputs."
+      );
+      renderThesisBulletList(
+        thesisRisks,
+        riskItems,
+        "No specific risks flagged beyond normal market volatility."
+      );
+      if (thesisSummary) {
+        thesisSummary.textContent = thesisCopy(
+          thesis.short_summary || (payload?.sections || {}).overall_conclusion,
+          thesisCopy(
+            score?.explanation,
+            "Long-term summary unavailable — retry after live data reconnects."
+          )
+        );
+      }
+    };
+
+    const setThesisLoading = (symbol, companyName) => {
+      if (thesisStockLine) {
+        thesisStockLine.textContent = formatThesisStockLine(symbol, companyName);
+      }
+      if (thesisBadge) {
+        thesisBadge.textContent = "Loading…";
         thesisBadge.className = "investor-rating-badge investor-rating-badge--neutral";
       }
       if (thesisWhy) thesisWhy.textContent = "Building long-term research thesis…";
-      renderThesisBulletList(thesisStrengths, [], "Analyzing…");
-      renderThesisBulletList(thesisRisks, [], "Analyzing…");
+      renderThesisBulletList(thesisStrengths, [], "Analyzing long-term strengths…");
+      renderThesisBulletList(thesisRisks, [], "Analyzing long-term risks…");
       if (thesisSummary) thesisSummary.textContent = "Summarizing long-term drivers…";
     };
 
-    const setThesisError = () => {
+    const setThesisError = (symbol, companyName) => {
+      if (thesisStockLine) {
+        thesisStockLine.textContent = formatThesisStockLine(symbol, companyName);
+      }
       if (thesisBadge) {
-        thesisBadge.textContent = "—";
+        thesisBadge.textContent = "Unavailable";
         thesisBadge.className = "investor-rating-badge investor-rating-badge--neutral";
       }
-      if (thesisWhy) thesisWhy.textContent = "Thesis unavailable — try again after data refresh.";
-      renderThesisBulletList(thesisStrengths, [], "—");
-      renderThesisBulletList(thesisRisks, [], "—");
-      if (thesisSummary) thesisSummary.textContent = "Keep this ticker on watch until live data reconnects.";
+      if (thesisWhy) {
+        thesisWhy.textContent = "Thesis unavailable — try again after data refresh.";
+      }
+      renderThesisBulletList(
+        thesisStrengths,
+        [],
+        "Strengths unavailable until live research data reconnects."
+      );
+      renderThesisBulletList(
+        thesisRisks,
+        [],
+        "Risk context unavailable until live research data reconnects."
+      );
+      if (thesisSummary) {
+        thesisSummary.textContent =
+          "Keep this ticker on watch until live research data reconnects. This is research support, not financial advice.";
+      }
     };
 
     const isInvestorChartDebug = () => {
@@ -546,12 +702,6 @@
     if (!searchMounted) {
       console.warn("[Investor] Search UI incomplete; chart and opportunities still load.");
     }
-
-    let selected = null;
-    let selectedFromSearch = false;
-    let currentRange = "1D";
-    let opportunitiesIntervalLabel = "6M";
-    let chartPlotState = null;
 
     const syncChartRangeLabel = () => {
       if (chartRangeLabel) chartRangeLabel.textContent = currentRange;
@@ -684,19 +834,23 @@
     const setSelected = (item, options) => {
       selected = item || null;
       selectedFromSearch = !!(options && options.fromSearch);
-      if (!selectedTicker || !selectedCompany || !selectedExchange || !selectedAssetType) return;
-      selectedTicker.textContent = text(item?.ticker);
-      selectedCompany.textContent = text(item?.company_name);
-      selectedExchange.textContent = text(item?.exchange);
-      selectedAssetType.textContent = text(item?.asset_type);
-      if (item?.ticker) {
-        void loadInvestorProfile(item.ticker);
-        void loadSelectedChart(item.ticker, currentRange);
-        void loadNews(item.ticker);
-        void loadInsiderActivity(item.ticker);
-        void loadScore(item.ticker);
-        void loadResearchSummary(item.ticker);
+      const sym = String(item?.ticker || "")
+        .trim()
+        .toUpperCase();
+      if (selectedTicker) selectedTicker.textContent = text(item?.ticker);
+      if (selectedCompany) selectedCompany.textContent = text(item?.company_name);
+      if (selectedExchange) selectedExchange.textContent = text(item?.exchange);
+      if (selectedAssetType) selectedAssetType.textContent = text(item?.asset_type);
+      if (selectedWatchlistStar) {
+        selectedWatchlistStar.hidden = !sym;
+        if (sym) wireWatchlistStar(selectedWatchlistStar, item);
       }
+      if (!sym) return;
+      void loadInvestorProfile(sym);
+      void loadSelectedChart(sym, currentRange);
+      void loadNews(sym);
+      void loadInsiderActivity(sym);
+      void hydrateSelectedResearch(sym, item?.company_name);
     };
 
     const isOnWatchlist = (ticker) => {
@@ -710,18 +864,55 @@
     const watchlistStarSvg = () =>
       `<svg class="investor-watchlist-star-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>`;
 
-    const syncSearchResultStars = () => {
-      if (!results) return;
-      results.querySelectorAll(".investor-watchlist-star").forEach((btn) => {
-        const sym = btn.dataset.ticker || "";
-        const on = isOnWatchlist(sym);
-        btn.classList.toggle("investor-watchlist-star--active", on);
-        btn.setAttribute("aria-pressed", on ? "true" : "false");
-        btn.setAttribute(
-          "aria-label",
-          on ? `Remove ${sym} from My Watchlist` : `Add ${sym} to My Watchlist`
+    const syncWatchlistStarButton = (btn, sym) => {
+      if (!btn) return;
+      const on = isOnWatchlist(sym);
+      btn.classList.toggle("investor-watchlist-star--active", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      const title = on ? "Remove from watchlist" : "Add to watchlist";
+      btn.title = title;
+      btn.setAttribute("aria-label", `${title} (${sym})`);
+    };
+
+    const syncAllWatchlistStars = () => {
+      if (results) {
+        results.querySelectorAll(".investor-watchlist-star[data-ticker]").forEach((btn) => {
+          syncWatchlistStarButton(btn, btn.dataset.ticker || "");
+        });
+      }
+      if (selectedWatchlistStar && selected?.ticker) {
+        syncWatchlistStarButton(
+          selectedWatchlistStar,
+          String(selected.ticker).trim().toUpperCase()
         );
-      });
+      }
+      if (oppsList) {
+        oppsList.querySelectorAll(".investor-watchlist-star[data-ticker]").forEach((btn) => {
+          syncWatchlistStarButton(btn, btn.dataset.ticker || "");
+        });
+      }
+      if (watchlistGrid) {
+        watchlistGrid.querySelectorAll(".investor-watchlist-star[data-ticker]").forEach((btn) => {
+          syncWatchlistStarButton(btn, btn.dataset.ticker || "");
+        });
+      }
+    };
+
+    const wireWatchlistStar = (btn, item) => {
+      const sym = String(item?.ticker || "")
+        .trim()
+        .toUpperCase();
+      if (!btn || !sym) return;
+      btn.dataset.ticker = sym;
+      if (!btn.querySelector(".investor-watchlist-star-icon")) {
+        btn.innerHTML = watchlistStarSvg();
+      }
+      syncWatchlistStarButton(btn, sym);
+      btn.onclick = (ev) => {
+        ev.stopPropagation();
+        ev.preventDefault();
+        toggleWatchlistItem(item);
+      };
     };
 
     const toggleWatchlistItem = (item) => {
@@ -740,7 +931,7 @@
         });
       }
       saveWatchlistItems(items);
-      syncSearchResultStars();
+      syncAllWatchlistStars();
       void renderWatchlist();
     };
 
@@ -751,7 +942,7 @@
       if (!sym) return;
       const next = loadWatchlistItems().filter((x) => x.ticker !== sym);
       saveWatchlistItems(next);
-      syncSearchResultStars();
+      syncAllWatchlistStars();
       void renderWatchlist();
     };
 
@@ -815,13 +1006,10 @@
 
       const removeBtn = document.createElement("button");
       removeBtn.type = "button";
-      removeBtn.className = "investor-watchlist-remove";
-      removeBtn.setAttribute("aria-label", `Remove ${data.ticker} from watchlist`);
-      removeBtn.textContent = "Remove";
-      removeBtn.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        removeFromWatchlist(data.ticker);
-      });
+      removeBtn.className = "investor-watchlist-star investor-watchlist-star--inline investor-watchlist-star--card";
+      removeBtn.innerHTML = watchlistStarSvg();
+      wireWatchlistStar(removeBtn, { ticker: data.ticker, company_name: data.company_name });
+      removeBtn.classList.add("investor-watchlist-star--active");
 
       top.appendChild(identity);
       top.appendChild(removeBtn);
@@ -869,9 +1057,13 @@
           company_name: data.company_name,
         });
       };
-      card.addEventListener("click", openCard);
+      card.addEventListener("click", (ev) => {
+        if (ev.target.closest(".investor-watchlist-star")) return;
+        openCard();
+      });
       card.addEventListener("keydown", (ev) => {
         if (ev.key === "Enter" || ev.key === " ") {
+          if (ev.target.closest(".investor-watchlist-star")) return;
           ev.preventDefault();
           openCard();
         }
@@ -1567,54 +1759,57 @@
       }
     };
 
-    const loadScore = async (symbol) => {
-      if (!symbol) return;
+    const hydrateSelectedResearch = async (symbol, companyName) => {
+      const sym = String(symbol || "")
+        .trim()
+        .toUpperCase();
+      if (!sym) return;
+      const seq = ++researchLoadSeq;
       setScoreLoading();
+      setThesisLoading(sym, companyName);
       try {
-        const res = await fetch(
-          `/api/investor/score?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(currentRange)}`
-        );
-        if (!res.ok) {
-          setScoreError();
-          return;
-        }
-        const payload = await res.json();
-        if (selectedScore) selectedScore.textContent = `${text(payload?.score)}/100`;
-        applyInvestorRatingBadge(selectedRating, payload?.rating);
-        renderInvestorPillarBreakdown(
-          selectedBreakdown,
-          payload?.breakdown || {},
-          payload?.score_pillars
-        );
-        if (selectedExplanation) {
-          const why = typeof payload?.why_ranked === "string" ? payload.why_ranked.trim() : "";
-          selectedExplanation.textContent = why || text(payload?.explanation);
-        }
-        if (selectedRisk) {
-          selectedRisk.textContent =
-            text(payload?.risk_warning) ||
-            `Long-term risk factors under review. ${INVESTOR_RESEARCH_DISCLAIMER}`;
-        }
-      } catch {
-        setScoreError();
-      }
-    };
+        const q = encodeURIComponent(sym);
+        const iv = encodeURIComponent(RESEARCH_INTERVAL);
+        const [summaryRes, scoreRes] = await Promise.all([
+          fetch(`/api/investor/research-summary?symbol=${q}&interval=${iv}`),
+          fetch(`/api/investor/score?symbol=${q}&interval=${iv}`),
+        ]);
+        if (seq !== researchLoadSeq) return;
 
-    const loadResearchSummary = async (symbol) => {
-      if (!symbol) return;
-      setThesisLoading();
-      try {
-        const res = await fetch(
-          `/api/investor/research-summary?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(currentRange)}`
-        );
-        if (!res.ok) {
-          setThesisError();
-          return;
+        let summary = null;
+        let score = null;
+        if (summaryRes.ok) {
+          try {
+            summary = await summaryRes.json();
+          } catch {
+            summary = null;
+          }
         }
-        const payload = await res.json();
-        applyThesisPayload(payload);
+        if (scoreRes.ok) {
+          try {
+            score = await scoreRes.json();
+          } catch {
+            score = null;
+          }
+        }
+        if (summary?.score && !score) score = summary.score;
+
+        const meta = { symbol: sym, companyName };
+
+        if (score) applyScorePanel(score);
+        else setScoreError();
+
+        if (summary) {
+          applyThesisPayload(summary, meta);
+        } else if (score) {
+          applyThesisFromScore(score, meta);
+        } else {
+          setThesisError(sym, companyName);
+        }
       } catch {
-        setThesisError();
+        if (seq !== researchLoadSeq) return;
+        setScoreError();
+        setThesisError(sym, companyName);
       }
     };
 
@@ -1728,6 +1923,16 @@
       row1.appendChild(tick);
       row1.appendChild(badge);
       row1.appendChild(scorePill);
+
+      const oppStar = document.createElement("button");
+      oppStar.type = "button";
+      oppStar.className = "investor-watchlist-star investor-watchlist-star--inline investor-opp-topline-star";
+      oppStar.innerHTML = watchlistStarSvg();
+      wireWatchlistStar(oppStar, {
+        ticker: item?.ticker,
+        company_name: item?.company_name,
+      });
+      row1.appendChild(oppStar);
 
       const company = document.createElement("p");
       company.className = "investor-opp-company";
@@ -1903,7 +2108,8 @@
       card.appendChild(newsUl);
       card.appendChild(metrics);
 
-      card.addEventListener("click", () => {
+      card.addEventListener("click", (ev) => {
+        if (ev.target.closest(".investor-watchlist-star")) return;
         setSelected(
           {
             ticker: item?.ticker,
@@ -1992,25 +2198,13 @@
         const starBtn = document.createElement("button");
         starBtn.type = "button";
         starBtn.className = "investor-watchlist-star";
-        starBtn.dataset.ticker = sym;
-        starBtn.innerHTML = watchlistStarSvg();
-        if (isOnWatchlist(sym)) {
-          starBtn.classList.add("investor-watchlist-star--active");
-          starBtn.setAttribute("aria-pressed", "true");
-          starBtn.setAttribute("aria-label", `Remove ${sym} from My Watchlist`);
-        } else {
-          starBtn.setAttribute("aria-pressed", "false");
-          starBtn.setAttribute("aria-label", `Add ${sym} to My Watchlist`);
-        }
-        starBtn.addEventListener("click", (ev) => {
-          ev.stopPropagation();
-          toggleWatchlistItem(item);
-        });
+        wireWatchlistStar(starBtn, item);
 
         row.appendChild(body);
         row.appendChild(starBtn);
         results.appendChild(row);
       });
+      syncAllWatchlistStars();
     };
 
     const runSearch = async () => {
@@ -2066,8 +2260,6 @@
         rangeButtons.forEach((x) => x.classList.toggle("investor-range-btn--active", x === btn));
         if (selected?.ticker) {
           void loadSelectedChart(selected.ticker, currentRange);
-          void loadScore(selected.ticker);
-          void loadResearchSummary(selected.ticker);
         }
       });
     });

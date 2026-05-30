@@ -980,6 +980,53 @@ body[data-active-tab="trader"] #view-investor {
   filter: drop-shadow(0 0 8px rgba(255, 214, 10, 0.8));
 }
 
+.investor-watchlist-star--inline {
+  width: 1.85rem;
+  height: 1.85rem;
+  border-left: none;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.investor-watchlist-star--panel {
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid rgba(139, 148, 158, 0.35);
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.investor-selected-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.investor-selected-head h3 {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.investor-opp-topline-star {
+  margin-left: auto;
+}
+
+.investor-thesis-stock-line {
+  margin: 0 0 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--text);
+}
+
+.investor-thesis-list .investor-thesis-placeholder {
+  color: var(--muted);
+  font-style: normal;
+}
+
 .investor-search-result-ticker {
   grid-area: ticker;
   font-size: 0.72rem;

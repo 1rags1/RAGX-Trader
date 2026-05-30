@@ -704,7 +704,23 @@
 
       <section class="investor-section investor-bottom-grid">
         <article class="investor-card" aria-labelledby="selected-stock-title">
-          <h3 id="selected-stock-title">Selected Stock Research Panel</h3>
+          <div class="investor-selected-head">
+            <h3 id="selected-stock-title">Selected Stock Research Panel</h3>
+            <button
+              type="button"
+              id="investor-selected-watchlist-star"
+              class="investor-watchlist-star investor-watchlist-star--panel"
+              hidden
+              aria-pressed="false"
+              title="Add to watchlist"
+            >
+              <svg class="investor-watchlist-star-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"
+                />
+              </svg>
+            </button>
+          </div>
           <p class="investor-panel-line">Selected ticker: <span id="investor-selected-ticker">—</span></p>
           <p class="investor-panel-line">Company: <span id="investor-selected-company">—</span></p>
           <p class="investor-panel-line">Exchange: <span id="investor-selected-exchange">—</span></p>
@@ -834,35 +850,47 @@
           <section class="investor-thesis" aria-labelledby="investor-thesis-heading">
             <h4 id="investor-thesis-heading" class="investor-section-divider">Long-Term Outlook</h4>
 
+            <p id="investor-thesis-stock-line" class="investor-thesis-stock-line">
+              Select a stock to load long-term research.
+            </p>
+
             <div class="investor-thesis-rating-row">
               <span class="investor-thesis-rating-label">Research rating</span>
               <span
                 id="investor-thesis-badge"
                 class="investor-rating-badge investor-rating-badge--neutral"
                 role="status"
-                >—</span
+                >Not rated yet</span
               >
             </div>
 
             <div class="investor-thesis-block">
               <p class="investor-thesis-block-label">Why This Stock Is on the Watchlist / Ranked Here</p>
-              <p id="investor-thesis-why" class="investor-thesis-copy">Select a stock to load the investment thesis.</p>
+              <p id="investor-thesis-why" class="investor-thesis-copy">
+                Select a stock to see why it ranks for long-term research.
+              </p>
             </div>
 
             <div class="investor-thesis-dual">
               <div class="investor-thesis-block investor-thesis-block--compact">
                 <p class="investor-thesis-block-label">Key Strengths</p>
-                <ul id="investor-thesis-strengths" class="investor-thesis-list"></ul>
+                <ul id="investor-thesis-strengths" class="investor-thesis-list">
+                  <li class="investor-thesis-placeholder">Strengths load after you select a stock.</li>
+                </ul>
               </div>
               <div class="investor-thesis-block investor-thesis-block--compact">
                 <p class="investor-thesis-block-label investor-thesis-block-label--risk">Key Risks</p>
-                <ul id="investor-thesis-risks" class="investor-thesis-list investor-thesis-list--risk"></ul>
+                <ul id="investor-thesis-risks" class="investor-thesis-list investor-thesis-list--risk">
+                  <li class="investor-thesis-placeholder">Risks load after you select a stock.</li>
+                </ul>
               </div>
             </div>
 
             <div class="investor-thesis-block investor-thesis-block--summary">
               <p class="investor-thesis-block-label">Short Summary</p>
-              <p id="investor-thesis-summary" class="investor-thesis-summary">—</p>
+              <p id="investor-thesis-summary" class="investor-thesis-summary">
+                A concise long-term summary will appear here after you select a stock.
+              </p>
               <p class="investor-thesis-disclaimer">This is research support, not financial advice.</p>
             </div>
           </section>
